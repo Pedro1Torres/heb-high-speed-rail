@@ -1,0 +1,2509 @@
+---
+import { hebStores as hebStoreData } from "../data/hebGeoData";
+
+const stationCount = hebStoreData.length;
+---
+
+<section
+  class="heb-landing"
+  aria-labelledby="heb-shinkansen-title"
+  data-map-root
+  data-view-state="landing"
+  data-regional-view="false"
+>
+  <div
+    class="heb-landing__scene"
+    data-map-scene
+    aria-label="Interactive geolocated Texas H-E-B Shinkansen map"
+  >
+  </div>
+
+  <div class="heb-landing__hud" data-ui-hud>
+    <nav class="heb-landing__nav" aria-label="Primary">
+      <a href="#home">Home</a>
+      <a href="#regions">Regions</a>
+      <a href="#cities">Cities</a>
+      <a href="#about">About</a>
+    </nav>
+
+    <div class="heb-landing__intro" data-map-trigger>
+      <div
+        class="heb-landing__copy"
+        data-intro-copy
+        role="button"
+        tabindex="0"
+        aria-label={`Reveal statewide H-E-B station network with ${stationCount} Texas stations`}
+      >
+        <p class="heb-landing__eyebrow">Texas State Guide</p>
+        <h1 id="heb-shinkansen-title">HEB Shinkansen</h1>
+        <p class="heb-landing__subtitle">Choose your Stations</p>
+      </div>
+    </div>
+
+    <div class="heb-landing__actions" aria-label="Map actions">
+      <a class="heb-landing__button heb-landing__button--primary" href="#start"
+        >GET STARTED</a
+      >
+      <a
+        class="heb-landing__button heb-landing__button--secondary"
+        href="#details">SEE DETAILS</a
+      >
+    </div>
+
+    <div class="heb-landing__region-hud" data-region-hud hidden>
+      <div class="heb-landing__region-title" data-region-title-panel>
+        <p class="heb-landing__region-kicker">Regional View</p>
+        <h2 data-region-title>SOUTH TEXAS REGIONAL NETWORK</h2>
+      </div>
+      <button
+        class="heb-landing__region-return"
+        type="button"
+        data-region-return>Return to State View</button
+      >
+    </div>
+  </div>
+</section>
+
+<script>
+  import { animate, createTimeline } from "animejs";
+  import maplibregl, {
+    type Map as MapLibreMap,
+    type MapLayerMouseEvent,
+  } from "maplibre-gl";
+  import "maplibre-gl/dist/maplibre-gl.css";
+  import * as THREE from "three";
+  import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+  import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+  import { hebStores, texasPath } from "../data/hebGeoData";
+
+  const root = document.querySelector<HTMLElement>("[data-map-root]");
+  const mapHost = root?.querySelector<HTMLElement>("[data-map-scene]");
+  const introCopy = root?.querySelector<HTMLElement>("[data-intro-copy]");
+  const regionHud = root?.querySelector<HTMLElement>("[data-region-hud]");
+  const regionTitlePanel = root?.querySelector<HTMLElement>(
+    "[data-region-title-panel]",
+  );
+  const regionTitle = root?.querySelector<HTMLElement>("[data-region-title]");
+  const regionReturn = root?.querySelector<HTMLButtonElement>(
+    "[data-region-return]",
+  );
+
+  if (
+    root &&
+    mapHost &&
+    introCopy &&
+    regionHud &&
+    regionTitlePanel &&
+    regionTitle &&
+    regionReturn
+  ) {
+    type SvgPoint = { x: number; y: number };
+    type SvgBounds = { minX: number; maxX: number; minY: number; maxY: number };
+    type GeoJsonPosition = [number, number];
+    type GlobalMercatorFrame = {
+      svgBounds: SvgBounds;
+      projectedMin: { x: number; y: number };
+      projectedMax: { x: number; y: number };
+    };
+    type TexasRegionSpec = {
+      id: string;
+      name: string;
+      clips: SvgPoint[][];
+    };
+    type RegionDefinition = {
+      id: string;
+      name: string;
+      svgPolygons: SvgPoint[][];
+      coordinates: GeoJsonPosition[][][];
+      bounds: maplibregl.LngLatBounds;
+    };
+    type StoreDefinition = (typeof hebStores)[number] & {
+      regionId: string;
+      regionName: string;
+    };
+    type MapGeometry =
+      | { type: "Polygon"; coordinates: GeoJsonPosition[][] }
+      | { type: "LineString"; coordinates: GeoJsonPosition[] };
+    type MapFeature = {
+      type: "Feature";
+      id?: string;
+      properties: Record<string, unknown>;
+      geometry: MapGeometry;
+    };
+    type MapFeatureCollection = {
+      type: "FeatureCollection";
+      features: MapFeature[];
+    };
+    type ViewState = "landing" | "state-network" | "regional";
+    type StationMode = "hidden" | "state" | "regional";
+    type StoreTileEntry = {
+      modelGroup: THREE.Group;
+      stateMarkerGroup: THREE.Group;
+      stateMarkerModel: THREE.Group;
+      stateMarkerScale: number;
+      regionId: string;
+    };
+    type StoreTileLayer = {
+      id: string;
+      type: "custom";
+      renderingMode: "3d";
+      onAdd: (
+        mapArg: MapLibreMap,
+        gl: WebGLRenderingContext | WebGL2RenderingContext,
+      ) => void;
+      render: (
+        gl: WebGLRenderingContext | WebGL2RenderingContext,
+        args: unknown,
+      ) => void;
+      onRemove: () => void;
+      setMode: (mode: StationMode, regionId?: string) => void;
+    };
+
+    const svgSnapPrecision = 0.001;
+    const openFreeMapStyleUrl = "https://tiles.openfreemap.org/styles/bright";
+    const storeModelUrl = "/models/HEB_Store.glb";
+    const stateMarkerModelUrl = "/models/HEB_cowboy_hat.glb";
+    const regularStoreFootprintMeters = 1240;
+    const hubStoreFootprintMeters = 1620;
+    const regularStateMarkerFootprintMeters = 18000;
+    const hubStateMarkerFootprintMeters = 24000;
+    const mapStateZoom = 5.1;
+    const mapRegionalZoom = 10.25;
+    const mapRegionalAnchorZoom = 12.85;
+    const mapPitch = 45;
+    const regionalPitch = 66;
+    const stateBearing = 0;
+    const regionalBearing = -18;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const mapSourceIds = {
+      regions: "heb-texas-regions",
+      stations: "heb-station-buildings",
+      routes: "heb-future-routes",
+    };
+    const mapLayerIds = {
+      regions: "texas-regions-fill",
+      borders: "texas-regions-borders",
+      routes: "shinkansen-transit-lines",
+      stations: "heb-station-3d-buildings",
+      storeTiles: "heb-store-3d-tiles",
+    };
+    const texasRegionSpecs: TexasRegionSpec[] = [
+      {
+        id: "panhandle",
+        name: "Panhandle",
+        clips: [
+          [
+            { x: 145, y: -80 },
+            { x: 263, y: -80 },
+            { x: 263, y: 136 },
+            { x: 145, y: 136 },
+          ],
+        ],
+      },
+      {
+        id: "west",
+        name: "West Texas",
+        clips: [
+          [
+            { x: -80, y: 136 },
+            { x: 263, y: 136 },
+            { x: 263, y: 600 },
+            { x: -80, y: 600 },
+          ],
+        ],
+      },
+      {
+        id: "north",
+        name: "North Texas",
+        clips: [
+          [
+            { x: 263, y: 110 },
+            { x: 400, y: 110 },
+            { x: 400, y: 240 },
+            { x: 263, y: 240 },
+          ],
+        ],
+      },
+      {
+        id: "central",
+        name: "Central Texas",
+        clips: [
+          [
+            { x: 263, y: 240 },
+            { x: 400, y: 240 },
+            { x: 400, y: 345 },
+            { x: 263, y: 345 },
+          ],
+        ],
+      },
+      {
+        id: "east",
+        name: "East Texas",
+        clips: [
+          [
+            { x: 400, y: 110 },
+            { x: 560, y: 110 },
+            { x: 560, y: 300 },
+            { x: 400, y: 300 },
+          ],
+        ],
+      },
+      {
+        id: "gulf",
+        name: "Gulf Coast",
+        clips: [
+          [
+            { x: 400, y: 300 },
+            { x: 560, y: 300 },
+            { x: 560, y: 600 },
+            { x: 400, y: 600 },
+          ],
+        ],
+      },
+      {
+        id: "south",
+        name: "South Texas",
+        clips: [
+          [
+            { x: 263, y: 345 },
+            { x: 400, y: 345 },
+            { x: 400, y: 600 },
+            { x: 263, y: 600 },
+          ],
+        ],
+      },
+    ];
+    const regionalAnchorStoreIds: Partial<Record<string, string>> = {
+      panhandle: "lubbock-4405-114th-street-48",
+      west: "midland-3325-west-wadley-63",
+      north: "plano-6001-preston-road-suite-100-8",
+      central: "austin-2400-s-congress-ave-258",
+      east: "lufkin-111-north-timberland-drive-201",
+      gulf: "houston-2300-n-shepherd-dr-158",
+      south: "mcallen-901-trenton-rd-126",
+    };
+
+    const texasOutlinePoints = parseSvgPathPoints(texasPath);
+    const texasOutlineBounds = getSvgPointBounds(texasOutlinePoints);
+    const globalMercatorFrame = createGlobalMercatorFrame(
+      hebStores,
+      texasOutlineBounds,
+    );
+    const regionDefinitions = createRegionDefinitions();
+    const storeDefinitions = createStoreDefinitions();
+    const texasBounds = getFeatureCollectionBounds(
+      createRegionFeatureCollection(),
+    );
+
+    let map: MapLibreMap | undefined;
+    let mapReady = false;
+    let viewState: ViewState = "landing";
+    let currentRegionId: string | null = null;
+    let returnViewState: Exclude<ViewState, "regional"> = "landing";
+    let isTransitioning = false;
+    let storeTileLayer: StoreTileLayer | undefined;
+
+    map = createMap();
+    introCopy.addEventListener("click", revealStateNetwork);
+    introCopy.addEventListener("keydown", handleIntroKeydown);
+    regionReturn.addEventListener("click", returnToStateView);
+    document.addEventListener("astro:before-swap", disposeMap, { once: true });
+
+    function createMap() {
+      const instance = new maplibregl.Map({
+        container: mapHost,
+        style: openFreeMapStyleUrl,
+        center: texasBounds.getCenter(),
+        zoom: mapStateZoom,
+        pitch: mapPitch,
+        bearing: stateBearing,
+        interactive: true,
+        dragPan: true,
+        dragRotate: true,
+        touchZoomRotate: true,
+        scrollZoom: true,
+        doubleClickZoom: true,
+        keyboard: true,
+        maxPitch: 80,
+        attributionControl: false,
+        maplibreLogo: false,
+        canvasContextAttributes: {
+          alpha: true,
+          antialias: true,
+          powerPreference: "high-performance",
+        },
+      });
+
+      instance.on("load", () => {
+        mapReady = true;
+        addMapLayers();
+        configureMapLight();
+        showLanding(false);
+      });
+      instance.on("zoom", syncLodFromZoom);
+      // NOTE: we intentionally do NOT couple any logic to the global
+      // "moveend" event. That event fires for ANY camera motion ending —
+      // wheel-zooms, pans, our scripted flyTo, etc. Coupling completion
+      // callbacks to moveend caused a wheel-then-click race where the
+      // wheel-zoom's moveend would consume a pending callback before the
+      // scripted flyTo even started visibly, skipping the fly-in. The
+      // setTimeout in completeAfterMove is the sole completion trigger
+      // now, which is timer-based and immune to that race.
+      instance.on("click", mapLayerIds.regions, handleRegionMapClick);
+      instance.on("mouseenter", mapLayerIds.regions, () => {
+        instance.getCanvas().style.cursor = "pointer";
+      });
+      instance.on("mouseleave", mapLayerIds.regions, () => {
+        instance.getCanvas().style.cursor = "";
+      });
+      instance.on("mouseenter", mapLayerIds.stations, () => {
+        instance.getCanvas().style.cursor = "pointer";
+      });
+      instance.on("mouseleave", mapLayerIds.stations, () => {
+        instance.getCanvas().style.cursor = "";
+      });
+      instance.on("click", mapLayerIds.stations, handleStationMapClick);
+
+      return instance;
+    }
+
+    function addMapLayers() {
+      if (!map || map.getSource(mapSourceIds.regions)) {
+        return;
+      }
+
+      const labelLayerId = getFirstLabelLayerId();
+
+      map.addSource(mapSourceIds.regions, {
+        type: "geojson",
+        data: createRegionFeatureCollection() as never,
+      });
+      map.addSource(mapSourceIds.stations, {
+        type: "geojson",
+        data: createStationFeatureCollection() as never,
+      });
+      map.addSource(mapSourceIds.routes, {
+        type: "geojson",
+        data: createEmptyFeatureCollection() as never,
+      });
+
+      map.addLayer(
+        {
+          id: mapLayerIds.regions,
+          type: "fill",
+          source: mapSourceIds.regions,
+          paint: {
+            "fill-color": "#e11921",
+            "fill-opacity": 1,
+          },
+        },
+        labelLayerId,
+      );
+
+      map.addLayer(
+        {
+          id: mapLayerIds.borders,
+          type: "line",
+          source: mapSourceIds.regions,
+          layout: {
+            "line-cap": "round",
+            "line-join": "round",
+          },
+          paint: {
+            "line-color": "#050505",
+            "line-opacity": 0.9,
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              4,
+              0.8,
+              6,
+              1.35,
+              9,
+              2.2,
+              12,
+              3.2,
+            ],
+          },
+        },
+        labelLayerId,
+      );
+
+      map.addLayer(
+        {
+          id: mapLayerIds.routes,
+          type: "line",
+          source: mapSourceIds.routes,
+          layout: {
+            "line-cap": "round",
+            "line-join": "round",
+          },
+          paint: {
+            "line-color": "#ffffff",
+            "line-opacity": 0,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.5, 9, 4],
+          },
+        },
+        labelLayerId,
+      );
+
+      map.addLayer(
+        {
+          id: mapLayerIds.stations,
+          type: "fill-extrusion",
+          source: mapSourceIds.stations,
+          paint: {
+            "fill-extrusion-color": "#ffffff",
+            "fill-extrusion-height": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              5,
+              45,
+              8,
+              200,
+              10,
+              520,
+              13,
+              900,
+            ],
+            "fill-extrusion-base": 0,
+            "fill-extrusion-opacity": 0,
+            "fill-extrusion-vertical-gradient": true,
+          },
+        },
+        labelLayerId,
+      );
+
+      storeTileLayer = createStoreTileLayer();
+      map.addLayer(storeTileLayer, labelLayerId);
+    }
+
+    function getFirstLabelLayerId() {
+      const layers = map?.getStyle().layers ?? [];
+      const labelLayer = layers.find(
+        (layer) =>
+          layer.type === "symbol" && Boolean(layer.layout?.["text-field"]),
+      );
+      return labelLayer?.id;
+    }
+
+    function configureMapLight() {
+      map?.setLight({
+        anchor: "viewport",
+        position: [1.35, 145, 45],
+        color: "#ffffff",
+        intensity: 0.72,
+      });
+    }
+
+    function createStoreTileLayer(): StoreTileLayer {
+      let scene: THREE.Scene | undefined;
+      let camera: THREE.Camera | undefined;
+      let renderer: THREE.WebGLRenderer | undefined;
+      let mapInstance: MapLibreMap | undefined;
+      let disposed = false;
+      let activeMode: StationMode =
+        viewState === "regional"
+          ? "regional"
+          : viewState === "landing"
+            ? "hidden"
+            : "state";
+      let activeRegionId: string | undefined = currentRegionId ?? undefined;
+      let loggedStoreModelBounds = false;
+      let hasPlayedStateMarkerReveal = false;
+      let stateMarkerRevealFrame = 0;
+      const tileEntries: StoreTileEntry[] = [];
+      const ownedGeometries = new Set<THREE.BufferGeometry>();
+      const ownedMaterials = new Set<THREE.Material>();
+
+      const applyVisibility = (animateStateReveal = false) => {
+        if (activeMode !== "state") {
+          cancelStateMarkerReveal();
+        }
+
+        tileEntries.forEach((entry) => {
+          const showStateMarker = activeMode === "state";
+          entry.stateMarkerGroup.visible = showStateMarker;
+          entry.modelGroup.visible =
+            activeMode === "regional" &&
+            (!activeRegionId || entry.regionId === activeRegionId);
+          if (!showStateMarker) {
+            entry.stateMarkerModel.scale.setScalar(0.001);
+          } else if (!animateStateReveal) {
+            entry.stateMarkerModel.scale.setScalar(entry.stateMarkerScale);
+          }
+        });
+
+        if (animateStateReveal) {
+          animateStateMarkers();
+        }
+      };
+
+      const animateStateMarkers = () => {
+        cancelStateMarkerReveal();
+        hasPlayedStateMarkerReveal = true;
+
+        if (reduceMotion) {
+          tileEntries.forEach((entry) => {
+            entry.stateMarkerModel.scale.setScalar(entry.stateMarkerScale);
+          });
+          mapInstance?.triggerRepaint();
+          return;
+        }
+
+        const start = performance.now();
+        const duration = 720;
+        const maxDelay = 780;
+        const tick = (now: number) => {
+          let isComplete = true;
+          tileEntries.forEach((entry, index) => {
+            const delay = Math.min(index * 5, maxDelay);
+            const progress = Math.min(
+              Math.max((now - start - delay) / duration, 0),
+              1,
+            );
+            if (progress < 1) {
+              isComplete = false;
+            }
+
+            const easedScale =
+              entry.stateMarkerScale * easeStateMarkerPop(progress);
+            entry.stateMarkerModel.scale.setScalar(Math.max(0.001, easedScale));
+          });
+
+          mapInstance?.triggerRepaint();
+          if (!isComplete) {
+            stateMarkerRevealFrame = window.requestAnimationFrame(tick);
+          } else {
+            tileEntries.forEach((entry) => {
+              entry.stateMarkerModel.scale.setScalar(entry.stateMarkerScale);
+            });
+            stateMarkerRevealFrame = 0;
+            mapInstance?.triggerRepaint();
+          }
+        };
+
+        stateMarkerRevealFrame = window.requestAnimationFrame(tick);
+      };
+
+      const cancelStateMarkerReveal = () => {
+        if (stateMarkerRevealFrame) {
+          window.cancelAnimationFrame(stateMarkerRevealFrame);
+          stateMarkerRevealFrame = 0;
+        }
+      };
+
+      const easeStateMarkerPop = (progress: number) => {
+        if (progress <= 0) {
+          return 0.001;
+        }
+        if (progress >= 1) {
+          return 1;
+        }
+
+        return (
+          Math.pow(2, -10 * progress) *
+            Math.sin((progress * 10 - 0.75) * ((2 * Math.PI) / 3)) +
+          1
+        );
+      };
+
+      const loadStoreModel = async () => {
+        const loader = new GLTFLoader();
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath("/libs/draco/");
+        loader.setDRACOLoader(dracoLoader);
+        try {
+          const [storeGltf, markerGltf] = await Promise.all([
+            loader.loadAsync(storeModelUrl),
+            loader.loadAsync(stateMarkerModelUrl),
+          ]);
+
+          if (disposed || !scene) {
+            return;
+          }
+
+          const normalizedModel = normalizeStoreModel(
+            storeGltf.scene,
+            ownedGeometries,
+            ownedMaterials,
+          );
+          const normalizedMarker = normalizeStateMarkerModel(
+            markerGltf.scene,
+            ownedGeometries,
+            ownedMaterials,
+          );
+          storeDefinitions.forEach((store) => {
+            const modelGroup = createStoreModelGroup(store, normalizedModel);
+            const stateMarker = createStateMarkerGroup(store, normalizedMarker);
+            tileEntries.push({
+              modelGroup,
+              stateMarkerGroup: stateMarker.group,
+              stateMarkerModel: stateMarker.marker,
+              stateMarkerScale: stateMarker.scale,
+              regionId: store.regionId,
+            });
+            scene?.add(stateMarker.group);
+            scene?.add(modelGroup);
+            if (!loggedStoreModelBounds) {
+              loggedStoreModelBounds = true;
+              modelGroup.updateMatrixWorld(true);
+              const bounds = new THREE.Box3().setFromObject(modelGroup);
+              console.log("H-E-B store model world-space bounding box", {
+                min: bounds.min.toArray(),
+                max: bounds.max.toArray(),
+              });
+            }
+          });
+          applyVisibility(
+            activeMode === "state" && !hasPlayedStateMarkerReveal,
+          );
+          mapInstance?.triggerRepaint();
+        } catch (error) {
+          console.warn("Unable to load H-E-B 3D marker models:", error);
+        } finally {
+          dracoLoader.dispose();
+        }
+      };
+
+      return {
+        id: mapLayerIds.storeTiles,
+        type: "custom",
+        renderingMode: "3d",
+        onAdd(mapArg, gl) {
+          mapInstance = mapArg;
+          camera = new THREE.Camera();
+          scene = new THREE.Scene();
+          scene.add(new THREE.HemisphereLight(0xffffff, 0xb9c3ca, 1.15));
+          scene.add(new THREE.AmbientLight(0xffffff, 0.32));
+
+          const keyLight = new THREE.DirectionalLight(0xffffff, 1.85);
+          keyLight.position.set(-0.45, -0.8, 1.5);
+          scene.add(keyLight);
+
+          const fillLight = new THREE.DirectionalLight(0xfff0dc, 0.58);
+          fillLight.position.set(0.9, 0.32, 0.72);
+          scene.add(fillLight);
+
+          const rimLight = new THREE.DirectionalLight(0xdcecff, 0.68);
+          rimLight.position.set(0.12, 1.1, 1.2);
+          scene.add(rimLight);
+
+          renderer = new THREE.WebGLRenderer({
+            canvas: mapArg.getCanvas(),
+            context: gl,
+            antialias: true,
+          });
+          renderer.autoClear = false;
+          renderer.outputColorSpace = THREE.SRGBColorSpace;
+          renderer.toneMapping = THREE.NeutralToneMapping;
+          renderer.toneMappingExposure = 1.08;
+          loadStoreModel();
+        },
+        render(_gl, args) {
+          const projectionMatrix = getProjectionMatrix(args);
+          if (!scene || !camera || !renderer || !projectionMatrix) {
+            return;
+          }
+
+          camera.projectionMatrix.fromArray(projectionMatrix);
+          renderer.resetState();
+          renderer.render(scene, camera);
+          mapInstance?.triggerRepaint();
+        },
+        onRemove() {
+          disposed = true;
+          cancelStateMarkerReveal();
+          tileEntries.forEach((entry) => {
+            scene?.remove(entry.modelGroup);
+            scene?.remove(entry.stateMarkerGroup);
+          });
+          tileEntries.splice(0);
+          ownedGeometries.forEach((geometry) => geometry.dispose());
+          ownedGeometries.clear();
+          ownedMaterials.forEach((material) => material.dispose());
+          ownedMaterials.clear();
+          renderer?.dispose();
+          renderer = undefined;
+          scene = undefined;
+          camera = undefined;
+          mapInstance = undefined;
+        },
+        setMode(mode, regionId) {
+          const previousMode = activeMode;
+          activeMode = mode;
+          activeRegionId = regionId;
+          if (mode === "hidden") {
+            hasPlayedStateMarkerReveal = false;
+          }
+          applyVisibility(
+            mode === "state" &&
+              previousMode !== "state" &&
+              !hasPlayedStateMarkerReveal,
+          );
+          mapInstance?.triggerRepaint();
+        },
+      };
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // ORIENTATION CONTROLS — flip these if the model still looks wrong.
+    // The GLB is authored Y-up (verified: roofs at Y≈11.25, pillars at
+    // Y≈2.1 in source node positions). Mapping Y-up to MapLibre's Z-up
+    // world is a +π/2 rotation around X. If the model appears upside-down
+    // in your browser, set MODEL_FLIP_UPSIDE_DOWN to true.
+    const MODEL_FLIP_UPSIDE_DOWN = false; // try `true` if the building hangs from the sky
+    // Distance (in GLB units) the H-E-B letters sit in front of the
+    // white backdrop panel. The Center_Tower's front face is at GLB
+    // z=+1.5, the backdrop at z=+1.55. With NUDGE=0.85 the letters sit
+    // at z≈2.4 — comfortably in front of both, with no risk of clipping
+    // into the tower's volume or z-fighting against the backdrop.
+    const MODEL_LETTERS_NUDGE = 0.85;
+    // The GLB stores the white backdrop panel at z=1.55 in source units.
+    const HEB_BACKDROP_Z = 1.55;
+    // ────────────────────────────────────────────────────────────────────
+
+    function normalizeStoreModel(
+      source: THREE.Object3D,
+      ownedGeometries: Set<THREE.BufferGeometry>,
+      ownedMaterials: Set<THREE.Material>,
+    ) {
+      const model = source.clone(true);
+
+      // The GLB authors the H-E-B sign on the +Z side of the backdrop
+      // panel, facing GLB +Z. With MapLibre's default camera, the user's
+      // "front facing" view looks at this wall from a direction where
+      // they see the back of the letters — which reads as mirrored
+      // "B-E-H".
+      //
+      // Fix: flip the letters' X positions and rotate them 180° around
+      // the vertical (Y) axis. The X-flip and Y-rotation together
+      // produce the mirror image of the original glyph layout, so the
+      // sign reads left-to-right as "H-E-B" from the user's camera.
+      //
+      // We KEEP the letters on the +Z (front) side of the backdrop,
+      // pushed out by NUDGE so they sit clearly in front of the
+      // Center_Tower's front face (z=+1.5) — no clipping into the
+      // building wall, no z-fight against the backdrop.
+      const yFlip = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        Math.PI,
+      );
+
+      const flipSignToFrontWall = (name: string) => {
+        const node = model.getObjectByName(name);
+        if (!node) return;
+        node.position.set(
+          -node.position.x,
+          node.position.y,
+          HEB_BACKDROP_Z + MODEL_LETTERS_NUDGE,
+        );
+        // premultiply preserves any existing per-node rotation (e.g. the
+        // B_white_space's built-in 90° X rotation) — the Y flip is
+        // composed on top of it in world space.
+        node.quaternion.premultiply(yFlip);
+      };
+
+      flipSignToFrontWall("HEB_Logo");
+      flipSignToFrontWall("B_white_space");
+      flipSignToFrontWall("B_white_space.001");
+
+      // Y-up → Z-up.
+      model.rotation.x = MODEL_FLIP_UPSIDE_DOWN ? -Math.PI / 2 : Math.PI / 2;
+
+      model.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) {
+          return;
+        }
+
+        ownedGeometries.add(mesh.geometry);
+        const materials = getMeshMaterials(mesh);
+        const hasRedMaterial = materials.some(isHebRedMaterial);
+
+        materials.forEach((material) => {
+          preserveGlbMaterialColor(material);
+          ownedMaterials.add(material);
+        });
+        if (hasRedMaterial) {
+          mesh.renderOrder = 20;
+        }
+        mesh.frustumCulled = false;
+      });
+
+      model.updateMatrixWorld(true);
+      const initialBounds = new THREE.Box3().setFromObject(model);
+      const center = initialBounds.getCenter(new THREE.Vector3());
+      model.position.x -= center.x;
+      model.position.y -= center.y;
+      model.position.z -= initialBounds.min.z;
+
+      const root = new THREE.Group();
+      root.add(model);
+      root.updateMatrixWorld(true);
+
+      // One-time diagnostic so we can verify orientation from the browser
+      // console without inspecting the canvas. Look at min.z and max.z:
+      // min.z should be 0 (ground) and max.z should be the height of the
+      // tallest part of the building (the tower roof).
+      const finalBounds = new THREE.Box3().setFromObject(root);
+      console.log("[HEB orientation check]", {
+        flippedManually: MODEL_FLIP_UPSIDE_DOWN,
+        rotationXRad: model.rotation.x,
+        worldBoundsMin: finalBounds.min.toArray().map((n) => +n.toFixed(2)),
+        worldBoundsMax: finalBounds.max.toArray().map((n) => +n.toFixed(2)),
+        note: "max.z is the top of the model; if max.z is ~0 and min.z is negative, the model is upside-down — flip MODEL_FLIP_UPSIDE_DOWN.",
+      });
+
+      return {
+        root,
+        size: new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()),
+      };
+    }
+
+    function getMeshMaterials(mesh: THREE.Mesh) {
+      return Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    }
+
+    function isHebRedMaterial(material: THREE.Material) {
+      return material.name.toLowerCase().includes("red");
+    }
+
+    function preserveGlbMaterialColor(material: THREE.Material) {
+      material.needsUpdate = true;
+      material.side = THREE.FrontSide;
+
+      const possibleTexturedMaterial =
+        material as THREE.MeshStandardMaterial & {
+          map?: THREE.Texture | null;
+          emissiveMap?: THREE.Texture | null;
+          color?: THREE.Color;
+          emissive?: THREE.Color;
+          emissiveIntensity?: number;
+          roughness?: number;
+          metalness?: number;
+          opacity?: number;
+          transparent?: boolean;
+          toneMapped?: boolean;
+        };
+
+      possibleTexturedMaterial.transparent = false;
+      possibleTexturedMaterial.opacity = 1;
+      possibleTexturedMaterial.toneMapped = true;
+
+      if (possibleTexturedMaterial.map) {
+        possibleTexturedMaterial.map.colorSpace = THREE.SRGBColorSpace;
+        possibleTexturedMaterial.map.needsUpdate = true;
+      }
+
+      if (possibleTexturedMaterial.emissiveMap) {
+        possibleTexturedMaterial.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+        possibleTexturedMaterial.emissiveMap.needsUpdate = true;
+      }
+
+      if (isHebRedMaterial(material)) {
+        possibleTexturedMaterial.color?.set(0xf31c24);
+        possibleTexturedMaterial.emissive?.set(0xb20d14);
+        possibleTexturedMaterial.emissiveIntensity = 0.82;
+        possibleTexturedMaterial.roughness = 0.28;
+        possibleTexturedMaterial.metalness = 0;
+        possibleTexturedMaterial.toneMapped = false;
+        // NOTE: We intentionally do NOT touch depthWrite / polygonOffset here.
+        // The previous code disabled depthWrite and pulled the red faces
+        // toward the camera with polygonOffset(-1,-1) so the H-E-B logo
+        // would "pop", but that produced z-fighting between overlapping red
+        // surfaces every frame (the "bleeding every second" symptom).
+        // Standard depth writes + opaque rendering = stable image.
+      }
+    }
+
+    function normalizeStateMarkerModel(
+      source: THREE.Object3D,
+      ownedGeometries: Set<THREE.BufferGeometry>,
+      ownedMaterials: Set<THREE.Material>,
+    ) {
+      const model = source.clone(true);
+      model.rotation.x = Math.PI / 2;
+      model.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) {
+          return;
+        }
+
+        ownedGeometries.add(mesh.geometry);
+        getMeshMaterials(mesh).forEach((material) => {
+          material.needsUpdate = true;
+          material.side = THREE.FrontSide;
+          ownedMaterials.add(material);
+        });
+        mesh.renderOrder = 16;
+        mesh.frustumCulled = false;
+      });
+
+      model.updateMatrixWorld(true);
+      const initialBounds = new THREE.Box3().setFromObject(model);
+      const center = initialBounds.getCenter(new THREE.Vector3());
+      model.position.x -= center.x;
+      model.position.y -= center.y;
+      model.position.z -= initialBounds.min.z;
+
+      const root = new THREE.Group();
+      root.add(model);
+      root.updateMatrixWorld(true);
+
+      return {
+        root,
+        size: new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()),
+      };
+    }
+
+    function createStoreModelGroup(
+      store: StoreDefinition,
+      normalizedModel: { root: THREE.Group; size: THREE.Vector3 },
+    ) {
+      const mercator = maplibregl.MercatorCoordinate.fromLngLat(
+        [store.lng, store.lat],
+        0,
+      );
+      const meterScale = mercator.meterInMercatorCoordinateUnits();
+      const targetFootprintMeters = store.hub
+        ? hubStoreFootprintMeters
+        : regularStoreFootprintMeters;
+      const modelFootprint = Math.max(
+        normalizedModel.size.x,
+        normalizedModel.size.y,
+        0.0001,
+      );
+      const modelScale = targetFootprintMeters / modelFootprint;
+      const group = new THREE.Group();
+      group.position.set(mercator.x, mercator.y, mercator.z);
+      group.scale.set(meterScale, meterScale, meterScale);
+      group.userData = {
+        id: store.id,
+        city: store.city,
+        regionId: store.regionId,
+      };
+
+      const model = normalizedModel.root.clone(true);
+      model.scale.setScalar(modelScale);
+      group.userData.storeModel = model;
+      group.add(model);
+
+      return group;
+    }
+
+    function createStateMarkerGroup(
+      store: StoreDefinition,
+      normalizedMarker: { root: THREE.Group; size: THREE.Vector3 },
+    ) {
+      const mercator = maplibregl.MercatorCoordinate.fromLngLat(
+        [store.lng, store.lat],
+        0,
+      );
+      const meterScale = mercator.meterInMercatorCoordinateUnits();
+      const targetFootprintMeters = store.hub
+        ? hubStateMarkerFootprintMeters
+        : regularStateMarkerFootprintMeters;
+      const markerFootprint = Math.max(
+        normalizedMarker.size.x,
+        normalizedMarker.size.y,
+        0.0001,
+      );
+      const markerScale = targetFootprintMeters / markerFootprint;
+      const group = new THREE.Group();
+      group.position.set(mercator.x, mercator.y, mercator.z);
+      group.scale.set(meterScale, meterScale, meterScale);
+      group.userData = {
+        id: store.id,
+        city: store.city,
+        regionId: store.regionId,
+        stationMarker: true,
+      };
+
+      const marker = normalizedMarker.root.clone(true);
+      marker.scale.setScalar(markerScale);
+      marker.renderOrder = 16;
+      group.add(marker);
+
+      return { group, marker, scale: markerScale };
+    }
+
+    function getProjectionMatrix(args: unknown) {
+      if (Array.isArray(args)) {
+        return args as number[];
+      }
+
+      if (typeof args === "object" && args) {
+        const mapArgs = args as {
+          defaultProjectionData?: { mainMatrix?: number[] };
+          projectionMatrix?: number[];
+        };
+
+        return (
+          mapArgs.defaultProjectionData?.mainMatrix ?? mapArgs.projectionMatrix
+        );
+      }
+
+      return undefined;
+    }
+
+    function createRegionDefinitions() {
+      return texasRegionSpecs
+        .map((spec) => {
+          const svgPolygons = spec.clips
+            .map((clip) =>
+              prepareRegionPolygon(
+                clipPolygonToConvexClip(texasOutlinePoints, clip),
+                texasOutlinePoints,
+              ),
+            )
+            .filter(
+              (polygon) =>
+                polygon.length >= 3 && Math.abs(signedSvgArea(polygon)) > 0.5,
+            );
+
+          const coordinates = svgPolygons.map((polygon) => [
+            closeRing(polygon.map(svgPointToLngLat)),
+          ]);
+          const bounds = new maplibregl.LngLatBounds();
+          coordinates.forEach((polygon) => {
+            polygon[0].forEach((position) => bounds.extend(position));
+          });
+
+          return {
+            id: spec.id,
+            name: spec.name,
+            svgPolygons,
+            coordinates,
+            bounds,
+          } satisfies RegionDefinition;
+        })
+        .filter((region) => region.svgPolygons.length > 0);
+    }
+
+    function createStoreDefinitions() {
+      return hebStores.map((store) => {
+        const region = getRegionForSvgPoint({ x: store.x, y: store.y });
+        return {
+          ...store,
+          regionId: region?.id ?? "statewide",
+          regionName: region?.name ?? "Statewide",
+        };
+      });
+    }
+
+    function createRegionFeatureCollection(): MapFeatureCollection {
+      return {
+        type: "FeatureCollection",
+        features: regionDefinitions.flatMap((region) =>
+          region.coordinates.map((coordinates, index) => ({
+            type: "Feature",
+            id: `${region.id}-${index}`,
+            properties: {
+              regionId: region.id,
+              regionName: region.name,
+            },
+            geometry: {
+              type: "Polygon",
+              coordinates,
+            },
+          })),
+        ),
+      };
+    }
+
+    function createStationFeatureCollection(): MapFeatureCollection {
+      return {
+        type: "FeatureCollection",
+        features: storeDefinitions.map((store) => ({
+          type: "Feature",
+          id: store.id,
+          properties: {
+            id: store.id,
+            city: store.city,
+            regionId: store.regionId,
+            regionName: store.regionName,
+            hub: store.hub,
+          },
+          geometry: {
+            type: "Polygon",
+            coordinates: [createStationFootprint(store)],
+          },
+        })),
+      };
+    }
+
+    function createEmptyFeatureCollection(): MapFeatureCollection {
+      return {
+        type: "FeatureCollection",
+        features: [],
+      };
+    }
+
+    function createStationFootprint(store: (typeof hebStores)[number]) {
+      const halfMeters = store.hub ? 450 : 320;
+      const latitudeRadians = (store.lat * Math.PI) / 180;
+      const latOffset = halfMeters / 111_320;
+      const lngOffset =
+        halfMeters / (111_320 * Math.max(Math.cos(latitudeRadians), 0.12));
+
+      return [
+        [store.lng - lngOffset, store.lat - latOffset],
+        [store.lng + lngOffset, store.lat - latOffset],
+        [store.lng + lngOffset, store.lat + latOffset],
+        [store.lng - lngOffset, store.lat + latOffset],
+        [store.lng - lngOffset, store.lat - latOffset],
+      ] as GeoJsonPosition[];
+    }
+
+    function handleIntroKeydown(event: KeyboardEvent) {
+      if (event.key === "Enter" || event.key === " ") {
+        revealStateNetwork(event);
+      }
+    }
+
+    function revealStateNetwork(event?: MouseEvent | KeyboardEvent) {
+      event?.preventDefault();
+      event?.stopPropagation();
+
+      if (!mapReady || viewState !== "landing" || isTransitioning) {
+        return;
+      }
+
+      isTransitioning = true;
+      returnViewState = "state-network";
+      runIntroExit(() => {
+        showStateNetwork(true);
+        isTransitioning = false;
+      });
+    }
+
+    function handleRegionMapClick(event: MapLayerMouseEvent) {
+      if (!mapReady || isTransitioning || viewState !== "state-network") {
+        return;
+      }
+
+      const regionId = event.features?.[0]?.properties?.regionId as
+        | string
+        | undefined;
+      if (!regionId) {
+        return;
+      }
+
+      enterRegionalView(regionId);
+    }
+
+    function handleStationMapClick(event: MapLayerMouseEvent) {
+      const station = event.features?.[0]?.properties;
+      if (!station) {
+        return;
+      }
+
+      root.dataset.selectedStationId = String(station.id ?? "");
+      root.dataset.selectedStationCity = String(station.city ?? "");
+      if (viewState === "state-network" && !isTransitioning) {
+        const regionId = station.regionId as string | undefined;
+        const stationId = station.id as string | undefined;
+        if (regionId && regionId !== "statewide") {
+          enterRegionalView(regionId, stationId);
+        }
+      }
+    }
+
+    function enterRegionalView(regionId: string, preferredStoreId?: string) {
+      const region = regionDefinitions.find((item) => item.id === regionId);
+      if (!map || !region || isTransitioning) {
+        return;
+      }
+
+      isTransitioning = true;
+      returnViewState =
+        viewState === "state-network" ? "state-network" : "landing";
+      viewState = "regional";
+      currentRegionId = regionId;
+      root.dataset.viewState = "regional";
+      root.dataset.regionalView = "true";
+      regionHud.hidden = false;
+      regionTitle.textContent = `${region.name.toUpperCase()} REGIONAL NETWORK`;
+      regionTitlePanel.style.opacity = "0";
+      regionReturn.style.opacity = "0";
+      setStationLayerMode("hidden");
+
+      runIntroExit();
+      animate(regionTitlePanel, {
+        opacity: [0, 1],
+        duration: 320,
+        ease: "outCubic",
+      });
+      animate(regionReturn, {
+        opacity: [0, 1],
+        duration: 320,
+        ease: "outCubic",
+      });
+
+      const cameraTarget = getRegionalCameraTarget(region, preferredStoreId);
+      root.dataset.regionalAnchorStoreId = cameraTarget.anchorStore?.id ?? "";
+      root.dataset.regionalAnchorStoreCity =
+        cameraTarget.anchorStore?.city ?? "";
+      const duration = reduceMotion ? 0 : 980;
+      // (1) Lock gesture handlers so any wheel events that arrive after
+      // the click are ignored (prevents new animations from starting).
+      lockMapInteractions();
+      // (2) Cancel any animation currently in flight. This is critical
+      // for the wheel-then-click sequence: MapLibre's scrollZoom kicks
+      // off its OWN internal camera animation (the smooth inertia ease)
+      // that runs for ~150-300ms after the wheel stops. Disabling the
+      // handler only stops FUTURE wheel events from triggering more
+      // animations — the one already in flight keeps going until it
+      // ends naturally OR until we cancel it here. Without map.stop(),
+      // the leftover inertia hits its next render tick and clobbers
+      // the flyTo mid-trajectory — exactly the "fly-in cuts off in the
+      // middle" symptom that appears when you wheel-zoom in then out
+      // rapidly before clicking.
+      map.stop();
+      completeAfterMove(duration, () => {
+        unlockMapInteractions();
+        if (currentRegionId !== regionId) {
+          return;
+        }
+
+        setStationLayerMode("regional", regionId);
+        syncLodFromZoom();
+        isTransitioning = false;
+      });
+      // (3) Start the scripted fly on a clean slate.
+      map.flyTo({
+        center: cameraTarget.center,
+        zoom: cameraTarget.zoom,
+        pitch: regionalPitch,
+        bearing: regionalBearing,
+        duration,
+        curve: 1.42,
+        speed: 0.72,
+        essential: true,
+      } as maplibregl.FlyToOptions);
+    }
+
+    function returnToStateView() {
+      if (!map || isTransitioning || viewState !== "regional") {
+        return;
+      }
+
+      isTransitioning = true;
+      const targetState = returnViewState;
+      currentRegionId = null;
+      animate(regionTitlePanel, {
+        opacity: 0,
+        duration: 220,
+        ease: "outCubic",
+      });
+      animate(regionReturn, { opacity: 0, duration: 220, ease: "outCubic" });
+      setStationLayerMode(targetState === "state-network" ? "state" : "hidden");
+
+      const duration = reduceMotion ? 0 : 860;
+      lockMapInteractions();
+      map.stop();
+      completeAfterMove(duration, () => {
+        unlockMapInteractions();
+        if (targetState === "state-network") {
+          showStateNetwork(false);
+        } else {
+          showLanding(false);
+        }
+        isTransitioning = false;
+      });
+      map.flyTo({
+        center: texasBounds.getCenter(),
+        zoom: mapStateZoom,
+        pitch: mapPitch,
+        bearing: stateBearing,
+        duration,
+        curve: 1.34,
+        speed: 0.84,
+        essential: true,
+      } as maplibregl.FlyToOptions);
+    }
+
+    function showLanding(fitCamera = true) {
+      viewState = "landing";
+      currentRegionId = null;
+      returnViewState = "landing";
+      root.dataset.viewState = "landing";
+      root.dataset.regionalView = "false";
+      root.dataset.maplibreLod = "state";
+      regionHud.hidden = true;
+      regionTitlePanel.style.opacity = "0";
+      regionReturn.style.opacity = "0";
+      introCopy.style.opacity = "1";
+      introCopy.style.transform = "scale(1)";
+      introCopy.style.visibility = "visible";
+      setStationLayerMode("hidden");
+      setRouteLayerVisible(false);
+
+      if (fitCamera) {
+        fitTexas(0);
+      }
+    }
+
+    function showStateNetwork(fitCamera = true) {
+      viewState = "state-network";
+      currentRegionId = null;
+      returnViewState = "state-network";
+      root.dataset.viewState = "state-network";
+      root.dataset.regionalView = "false";
+      regionHud.hidden = true;
+      regionTitlePanel.style.opacity = "0";
+      regionReturn.style.opacity = "0";
+      introCopy.style.opacity = "0";
+      introCopy.style.transform = "scale(0.88)";
+      introCopy.style.visibility = "hidden";
+      setStationLayerMode("state");
+      setRouteLayerVisible(false);
+      syncLodFromZoom();
+
+      if (fitCamera) {
+        fitTexas(reduceMotion ? 0 : 680);
+      }
+    }
+
+    function fitTexas(duration: number) {
+      map?.flyTo({
+        center: texasBounds.getCenter(),
+        zoom: mapStateZoom,
+        pitch: mapPitch,
+        bearing: stateBearing,
+        duration,
+        curve: 1.34,
+        speed: 0.84,
+        essential: true,
+      } as maplibregl.FlyToOptions);
+    }
+
+    function runIntroExit(onComplete?: () => void) {
+      if (
+        introCopy.style.visibility === "hidden" ||
+        introCopy.style.opacity === "0" ||
+        reduceMotion
+      ) {
+        introCopy.style.opacity = "0";
+        introCopy.style.transform = "scale(0.88)";
+        introCopy.style.visibility = "hidden";
+        onComplete?.();
+        return;
+      }
+
+      createTimeline({
+        onComplete: () => {
+          introCopy.style.visibility = "hidden";
+          onComplete?.();
+        },
+      }).add(
+        introCopy,
+        {
+          opacity: [1, 0],
+          scale: [1, 0.88],
+          duration: 360,
+          ease: "inCubic",
+        },
+        0,
+      );
+    }
+
+    function lockMapInteractions() {
+      if (!map) return;
+      // Disable every gesture-driven camera handler. The big one is
+      // scrollZoom — if the user wheel-scrolls during our flyTo (or has
+      // residual wheel-input still in flight from before the click),
+      // MapLibre's scrollZoom handler starts a new ease that cancels
+      // the flyTo. Disabling all of them keeps the scripted animation
+      // running cleanly. They're re-enabled when the flyTo completes.
+      map.scrollZoom.disable();
+      map.boxZoom.disable();
+      map.dragRotate.disable();
+      map.dragPan.disable();
+      map.keyboard.disable();
+      map.doubleClickZoom.disable();
+      map.touchZoomRotate.disable();
+    }
+
+    function unlockMapInteractions() {
+      if (!map) return;
+      map.scrollZoom.enable();
+      map.boxZoom.enable();
+      map.dragRotate.enable();
+      map.dragPan.enable();
+      map.keyboard.enable();
+      map.doubleClickZoom.enable();
+      map.touchZoomRotate.enable();
+    }
+
+    function completeAfterMove(duration: number, callback: () => void) {
+      let completed = false;
+      const finish = () => {
+        if (completed) {
+          return;
+        }
+
+        completed = true;
+        callback();
+      };
+
+      window.setTimeout(finish, duration + 140);
+    }
+
+    function setStationLayerMode(mode: StationMode, regionId?: string) {
+      if (!map?.getLayer(mapLayerIds.stations)) {
+        storeTileLayer?.setMode(mode, regionId);
+        return;
+      }
+
+      if (regionId) {
+        map.setFilter(mapLayerIds.stations, [
+          "==",
+          ["get", "regionId"],
+          regionId,
+        ]);
+      } else {
+        map.setFilter(mapLayerIds.stations, null);
+      }
+
+      if (mode === "hidden") {
+        map.setPaintProperty(mapLayerIds.stations, "fill-extrusion-opacity", 0);
+        storeTileLayer?.setMode(mode, regionId);
+        return;
+      }
+
+      map.setPaintProperty(mapLayerIds.stations, "fill-extrusion-opacity", 0);
+      storeTileLayer?.setMode(mode, regionId);
+    }
+
+    function setRouteLayerVisible(isVisible: boolean) {
+      if (map?.getLayer(mapLayerIds.routes)) {
+        map.setPaintProperty(
+          mapLayerIds.routes,
+          "line-opacity",
+          isVisible ? 0.9 : 0,
+        );
+      }
+    }
+
+    function syncLodFromZoom() {
+      if (!map) {
+        return;
+      }
+
+      const lod =
+        map.getZoom() >= 7.25 || viewState === "regional"
+          ? "regional"
+          : "state";
+      root.dataset.maplibreLod = lod;
+    }
+
+    function getStateFitPadding() {
+      const verticalPadding = Math.max(86, window.innerHeight * 0.12);
+      const horizontalPadding = Math.max(44, window.innerWidth * 0.12);
+      return {
+        top: verticalPadding,
+        bottom: verticalPadding,
+        left: horizontalPadding,
+        right: horizontalPadding,
+      };
+    }
+
+    function getRegionalFitPadding() {
+      return {
+        top: Math.max(86, window.innerHeight * 0.12),
+        bottom: Math.max(96, window.innerHeight * 0.16),
+        left: Math.max(54, window.innerWidth * 0.1),
+        right: Math.max(54, window.innerWidth * 0.1),
+      };
+    }
+
+    function getRegionalCameraTarget(
+      region: RegionDefinition,
+      preferredStoreId?: string,
+    ) {
+      const anchorStore = getRegionalAnchorStore(region, preferredStoreId);
+      const center = anchorStore
+        ? new maplibregl.LngLat(anchorStore.lng, anchorStore.lat)
+        : region.bounds.getCenter();
+
+      return {
+        anchorStore,
+        center,
+        zoom: getRegionalAnchorZoom(region, Boolean(anchorStore)),
+      };
+    }
+
+    function getRegionalAnchorStore(
+      region: RegionDefinition,
+      preferredStoreId?: string,
+    ) {
+      const preferredStore = preferredStoreId
+        ? storeDefinitions.find(
+            (store) =>
+              store.id === preferredStoreId && store.regionId === region.id,
+          )
+        : undefined;
+      if (preferredStore) {
+        return preferredStore;
+      }
+
+      const anchorId = regionalAnchorStoreIds[region.id];
+      const explicitAnchor = anchorId
+        ? storeDefinitions.find((store) => store.id === anchorId)
+        : undefined;
+      if (explicitAnchor) {
+        return explicitAnchor;
+      }
+
+      const regionStores = storeDefinitions.filter(
+        (store) => store.regionId === region.id,
+      );
+      if (regionStores.length) {
+        return getClosestStoreToLngLat(regionStores, region.bounds.getCenter());
+      }
+
+      return getClosestStoreToLngLat(
+        storeDefinitions,
+        region.bounds.getCenter(),
+      );
+    }
+
+    function getClosestStoreToLngLat(
+      stores: StoreDefinition[],
+      target: maplibregl.LngLat,
+    ) {
+      return stores.reduce<StoreDefinition | undefined>((closest, store) => {
+        if (!closest) {
+          return store;
+        }
+
+        return getLngLatDistanceScore(store, target) <
+          getLngLatDistanceScore(closest, target)
+          ? store
+          : closest;
+      }, undefined);
+    }
+
+    function getLngLatDistanceScore(
+      store: StoreDefinition,
+      target: maplibregl.LngLat,
+    ) {
+      const lngDelta = store.lng - target.lng;
+      const latDelta = store.lat - target.lat;
+      return lngDelta * lngDelta + latDelta * latDelta;
+    }
+
+    function getRegionalAnchorZoom(
+      region: RegionDefinition,
+      hasAnchorStore: boolean,
+    ) {
+      // Always fly to a CONSISTENT zoom level when a region is clicked,
+      // independent of the user's current zoom.
+      //
+      // The previous version added a relative step on top of the user's
+      // current zoom (`currentZoom + manualZoomStep`). That meant: if a
+      // user wheel-zoomed in past the regional anchor zoom and then
+      // clicked a region, the fly-in target collapsed toward "wherever
+      // they already are" — no cinematic fly-in to the designated HEB,
+      // just a small camera nudge that ended with the regional building
+      // models popping in (the "just display the stores" symptom).
+      //
+      // With a fixed target, every click — regardless of prior wheel
+      // zoom — produces a deliberate, predictable fly-in that lands the
+      // camera exactly on the designated HEB at the right framing.
+      const baseline = hasAnchorStore
+        ? Math.max(mapRegionalAnchorZoom, getRegionalMaxZoom(region))
+        : getRegionalMaxZoom(region);
+      const mapMaxZoom = map?.getMaxZoom() ?? 22;
+      return Math.min(mapMaxZoom - 0.05, baseline);
+    }
+
+    function getRegionalMaxZoom(region: RegionDefinition) {
+      const west = region.bounds.getWest();
+      const east = region.bounds.getEast();
+      const north = region.bounds.getNorth();
+      const south = region.bounds.getSouth();
+      const span = Math.max(
+        Math.abs(east - west),
+        Math.abs(north - south),
+        0.08,
+      );
+      return Math.min(11.2, Math.max(mapRegionalZoom, 10.9 - Math.log2(span)));
+    }
+
+    function getFeatureCollectionBounds(collection: MapFeatureCollection) {
+      const bounds = new maplibregl.LngLatBounds();
+      collection.features.forEach((feature) => {
+        if (feature.geometry.type === "Polygon") {
+          feature.geometry.coordinates
+            .flat()
+            .forEach((position) => bounds.extend(position));
+        } else {
+          feature.geometry.coordinates.forEach((position) =>
+            bounds.extend(position),
+          );
+        }
+      });
+
+      return bounds.isEmpty()
+        ? new maplibregl.LngLatBounds([-106.7, 25.7], [-93.4, 36.5])
+        : bounds;
+    }
+
+    function getRegionForSvgPoint(point: SvgPoint) {
+      return regionDefinitions.find((region) =>
+        region.svgPolygons.some((polygon) =>
+          isPointInSvgPolygon(point, polygon),
+        ),
+      );
+    }
+
+    function isPointInSvgPolygon(point: SvgPoint, polygon: SvgPoint[]) {
+      let inside = false;
+
+      for (
+        let index = 0, previousIndex = polygon.length - 1;
+        index < polygon.length;
+        previousIndex = index, index += 1
+      ) {
+        const current = polygon[index];
+        const previous = polygon[previousIndex];
+        const intersects =
+          current.y > point.y !== previous.y > point.y &&
+          point.x <
+            ((previous.x - current.x) * (point.y - current.y)) /
+              (previous.y - current.y || 0.000001) +
+              current.x;
+
+        if (intersects) {
+          inside = !inside;
+        }
+      }
+
+      return inside;
+    }
+
+    function parseSvgPathPoints(pathData: string) {
+      const tokens = pathData.match(/[MLZ]|-?\d+(?:\.\d+)?/g) ?? [];
+      const points: SvgPoint[] = [];
+      let index = 0;
+      let command = "";
+
+      while (index < tokens.length) {
+        const token = tokens[index++];
+        if (token === "M" || token === "L" || token === "Z") {
+          command = token;
+        } else {
+          index -= 1;
+        }
+
+        if (command === "M" || command === "L") {
+          const x = Number(tokens[index++]);
+          const y = Number(tokens[index++]);
+          points.push({ x, y });
+        }
+
+        if (command === "Z") {
+          break;
+        }
+      }
+
+      return cleanSvgPolygon(points);
+    }
+
+    function prepareRegionPolygon(
+      points: SvgPoint[],
+      texasOutline: SvgPoint[],
+    ) {
+      return normalizeSvgPolygon(
+        snapPolygonToMasterBoundary(cleanSvgPolygon(points), texasOutline),
+      );
+    }
+
+    function snapPolygonToMasterBoundary(
+      points: SvgPoint[],
+      texasOutline: SvgPoint[],
+    ) {
+      return points.map((point) =>
+        snapPointToMasterBoundary(point, texasOutline),
+      );
+    }
+
+    function snapPointToMasterBoundary(
+      point: SvgPoint,
+      texasOutline: SvgPoint[],
+    ) {
+      let nearestPoint = point;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      const snapTolerance = 0.08;
+
+      for (let index = 0; index < texasOutline.length; index += 1) {
+        const start = texasOutline[index];
+        const end = texasOutline[(index + 1) % texasOutline.length];
+        const candidate = closestPointOnSegment(point, start, end);
+        const distance = Math.hypot(
+          point.x - candidate.x,
+          point.y - candidate.y,
+        );
+
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestPoint = candidate;
+        }
+      }
+
+      return nearestDistance <= snapTolerance ? nearestPoint : point;
+    }
+
+    function closestPointOnSegment(
+      point: SvgPoint,
+      start: SvgPoint,
+      end: SvgPoint,
+    ) {
+      const segmentX = end.x - start.x;
+      const segmentY = end.y - start.y;
+      const lengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+      if (lengthSquared === 0) {
+        return start;
+      }
+
+      const t = Math.max(
+        0,
+        Math.min(
+          1,
+          ((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) /
+            lengthSquared,
+        ),
+      );
+      return {
+        x: start.x + t * segmentX,
+        y: start.y + t * segmentY,
+      };
+    }
+
+    function normalizeSvgPolygon(points: SvgPoint[]) {
+      return cleanSvgPolygon(
+        points.map((point) => ({
+          x: snapNumber(point.x),
+          y: snapNumber(point.y),
+        })),
+      );
+    }
+
+    function snapNumber(value: number) {
+      return Math.round(value / svgSnapPrecision) * svgSnapPrecision;
+    }
+
+    function clipPolygonToConvexClip(
+      subjectPolygon: SvgPoint[],
+      clipPolygon: SvgPoint[],
+    ) {
+      let output = [...subjectPolygon];
+      const clipOrientation = signedSvgArea(clipPolygon) >= 0 ? 1 : -1;
+
+      for (let clipIndex = 0; clipIndex < clipPolygon.length; clipIndex += 1) {
+        const clipStart = clipPolygon[clipIndex];
+        const clipEnd = clipPolygon[(clipIndex + 1) % clipPolygon.length];
+        const input = output;
+        output = [];
+
+        for (let index = 0; index < input.length; index += 1) {
+          const start = input[(index + input.length - 1) % input.length];
+          const end = input[index];
+          const startInside = isInsideClipEdge(
+            start,
+            clipStart,
+            clipEnd,
+            clipOrientation,
+          );
+          const endInside = isInsideClipEdge(
+            end,
+            clipStart,
+            clipEnd,
+            clipOrientation,
+          );
+
+          if (endInside) {
+            if (!startInside) {
+              output.push(
+                getSegmentIntersection(start, end, clipStart, clipEnd),
+              );
+            }
+            output.push(end);
+          } else if (startInside) {
+            output.push(getSegmentIntersection(start, end, clipStart, clipEnd));
+          }
+        }
+
+        output = cleanSvgPolygon(output);
+      }
+
+      return output;
+    }
+
+    function isInsideClipEdge(
+      point: SvgPoint,
+      edgeStart: SvgPoint,
+      edgeEnd: SvgPoint,
+      clipOrientation: number,
+    ) {
+      const cross =
+        (edgeEnd.x - edgeStart.x) * (point.y - edgeStart.y) -
+        (edgeEnd.y - edgeStart.y) * (point.x - edgeStart.x);
+
+      return clipOrientation >= 0 ? cross >= -0.001 : cross <= 0.001;
+    }
+
+    function getSegmentIntersection(
+      start: SvgPoint,
+      end: SvgPoint,
+      edgeStart: SvgPoint,
+      edgeEnd: SvgPoint,
+    ) {
+      const segmentX = end.x - start.x;
+      const segmentY = end.y - start.y;
+      const edgeX = edgeEnd.x - edgeStart.x;
+      const edgeY = edgeEnd.y - edgeStart.y;
+      const denominator = segmentX * edgeY - segmentY * edgeX;
+
+      if (Math.abs(denominator) < 0.000001) {
+        return { ...end };
+      }
+
+      const t =
+        ((edgeStart.x - start.x) * edgeY - (edgeStart.y - start.y) * edgeX) /
+        denominator;
+      return {
+        x: start.x + t * segmentX,
+        y: start.y + t * segmentY,
+      };
+    }
+
+    function cleanSvgPolygon(points: SvgPoint[]) {
+      const cleaned: SvgPoint[] = [];
+
+      for (const point of points) {
+        const previous = cleaned[cleaned.length - 1];
+        if (
+          !previous ||
+          Math.hypot(previous.x - point.x, previous.y - point.y) > 0.001
+        ) {
+          cleaned.push(point);
+        }
+      }
+
+      const first = cleaned[0];
+      const last = cleaned[cleaned.length - 1];
+      if (
+        first &&
+        last &&
+        Math.hypot(first.x - last.x, first.y - last.y) <= 0.001
+      ) {
+        cleaned.pop();
+      }
+
+      return cleaned;
+    }
+
+    function signedSvgArea(points: SvgPoint[]) {
+      let area = 0;
+
+      for (let index = 0; index < points.length; index += 1) {
+        const current = points[index];
+        const next = points[(index + 1) % points.length];
+        area += current.x * next.y - next.x * current.y;
+      }
+
+      return area / 2;
+    }
+
+    function getSvgPointBounds(points: SvgPoint[]): SvgBounds {
+      const bounds = {
+        minX: Number.POSITIVE_INFINITY,
+        maxX: Number.NEGATIVE_INFINITY,
+        minY: Number.POSITIVE_INFINITY,
+        maxY: Number.NEGATIVE_INFINITY,
+      };
+
+      points.forEach((point) => {
+        bounds.minX = Math.min(bounds.minX, point.x);
+        bounds.maxX = Math.max(bounds.maxX, point.x);
+        bounds.minY = Math.min(bounds.minY, point.y);
+        bounds.maxY = Math.max(bounds.maxY, point.y);
+      });
+
+      if (!Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY)) {
+        return { minX: 0, maxX: 512, minY: 0, maxY: 512 };
+      }
+
+      return bounds;
+    }
+
+    function createGlobalMercatorFrame(
+      stores: typeof hebStores,
+      svgBounds: SvgBounds,
+    ): GlobalMercatorFrame {
+      const longitudePairs: [number, number][] = [];
+      const latitudePairs: [number, number][] = [];
+      const svgWidth = Math.max(svgBounds.maxX - svgBounds.minX, 0.000001);
+      const svgHeight = Math.max(svgBounds.maxY - svgBounds.minY, 0.000001);
+
+      stores.forEach((store) => {
+        const projected = projectWebMercator(store.lat, store.lng);
+        longitudePairs.push([
+          (store.x - svgBounds.minX) / svgWidth,
+          projected.x,
+        ]);
+        latitudePairs.push([
+          (svgBounds.maxY - store.y) / svgHeight,
+          projected.y,
+        ]);
+      });
+
+      const projectedXFrame = fitProjectionFrame(longitudePairs);
+      const projectedYFrame = fitProjectionFrame(latitudePairs);
+
+      return {
+        svgBounds,
+        projectedMin: { x: projectedXFrame.min, y: projectedYFrame.min },
+        projectedMax: { x: projectedXFrame.max, y: projectedYFrame.max },
+      };
+    }
+
+    function projectWebMercator(
+      latitude: number,
+      longitude: number,
+      mapWidth = 360,
+      mapHeight = 360,
+    ) {
+      const clampedLatitude = Math.max(
+        -85.05112878,
+        Math.min(85.05112878, latitude),
+      );
+      return {
+        x: longitude * (mapWidth / 360),
+        y:
+          Math.log(Math.tan(Math.PI / 4 + (clampedLatitude * Math.PI) / 360)) *
+          (mapHeight / (2 * Math.PI)),
+      };
+    }
+
+    function unprojectWebMercator(
+      projectedX: number,
+      projectedY: number,
+      mapHeight = 360,
+    ): GeoJsonPosition {
+      const latitudeRadians =
+        Math.atan(Math.exp(projectedY / (mapHeight / (2 * Math.PI)))) -
+        Math.PI / 4;
+      const latitude = (latitudeRadians * 360) / Math.PI;
+      return [projectedX, latitude];
+    }
+
+    function fitProjectionFrame(pairs: [number, number][]) {
+      if (pairs.length < 2) {
+        return { min: 0, max: 1 };
+      }
+
+      let sumNormalized = 0;
+      let sumProjected = 0;
+      let sumNormalizedSquared = 0;
+      let sumProduct = 0;
+
+      pairs.forEach(([normalized, projected]) => {
+        sumNormalized += normalized;
+        sumProjected += projected;
+        sumNormalizedSquared += normalized * normalized;
+        sumProduct += normalized * projected;
+      });
+
+      const count = pairs.length;
+      const denominator =
+        count * sumNormalizedSquared - sumNormalized * sumNormalized;
+      const slope =
+        Math.abs(denominator) > 0.000001
+          ? (count * sumProduct - sumNormalized * sumProjected) / denominator
+          : 1;
+      const intercept = (sumProjected - slope * sumNormalized) / count;
+      const frameStart = intercept;
+      const frameEnd = intercept + slope;
+
+      return {
+        min: Math.min(frameStart, frameEnd),
+        max: Math.max(frameStart, frameEnd),
+      };
+    }
+
+    function svgPointToLngLat(point: SvgPoint): GeoJsonPosition {
+      const { svgBounds, projectedMin, projectedMax } = globalMercatorFrame;
+      const width = Math.max(svgBounds.maxX - svgBounds.minX, 0.000001);
+      const height = Math.max(svgBounds.maxY - svgBounds.minY, 0.000001);
+      const normalizedX = (point.x - svgBounds.minX) / width;
+      const normalizedY = (svgBounds.maxY - point.y) / height;
+      const projectedX =
+        projectedMin.x + (projectedMax.x - projectedMin.x) * normalizedX;
+      const projectedY =
+        projectedMin.y + (projectedMax.y - projectedMin.y) * normalizedY;
+      return unprojectWebMercator(projectedX, projectedY);
+    }
+
+    function closeRing(ring: GeoJsonPosition[]) {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (!first || !last) {
+        return ring;
+      }
+
+      if (first[0] === last[0] && first[1] === last[1]) {
+        return ring;
+      }
+
+      return [...ring, first];
+    }
+
+    function disposeMap() {
+      introCopy.removeEventListener("click", revealStateNetwork);
+      introCopy.removeEventListener("keydown", handleIntroKeydown);
+      regionReturn.removeEventListener("click", returnToStateView);
+      map?.remove();
+    }
+  }
+</script>
+
+<style>
+  :global(html),
+  :global(body) {
+    min-height: 100%;
+    margin: 0;
+  }
+
+  :global(body) {
+    overflow: hidden;
+  }
+
+  .heb-landing {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    min-height: 620px;
+    overflow: hidden;
+    color: #fff;
+    background:
+      radial-gradient(
+        circle at 50% 28%,
+        rgba(244, 248, 252, 0.44),
+        rgba(169, 180, 190, 0.16) 34%,
+        transparent 60%
+      ),
+      linear-gradient(145deg, #d9dfe4 0%, #aeb8c2 52%, #87929d 100%);
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    isolation: isolate;
+  }
+
+  .heb-landing::before {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    content: "";
+    background:
+      repeating-linear-gradient(
+        0deg,
+        rgba(255, 255, 255, 0.08) 0 1px,
+        transparent 1px 4px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        rgba(30, 40, 50, 0.05) 0 1px,
+        transparent 1px 5px
+      );
+    mix-blend-mode: soft-light;
+    opacity: 0.72;
+  }
+
+  .heb-landing::after {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    content: "";
+    background:
+      radial-gradient(
+        circle at 50% 50%,
+        transparent 0 42%,
+        rgba(65, 75, 86, 0.18) 100%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.18),
+        transparent 22%,
+        rgba(43, 53, 63, 0.2)
+      );
+  }
+
+  .heb-landing__scene {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  :global(.heb-landing__scene .maplibregl-canvas) {
+    background: transparent;
+    outline: none;
+  }
+
+  :global(.heb-landing__scene .maplibregl-control-container) {
+    display: none;
+  }
+
+  .heb-landing__hud {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+  }
+
+  .heb-landing__nav {
+    position: absolute;
+    top: clamp(1rem, 3vw, 2rem);
+    left: 50%;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(0.35rem, 2vw, 1.15rem);
+    width: min(92vw, 520px);
+    padding: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.13);
+    box-shadow: 0 18px 44px rgba(35, 45, 56, 0.16);
+    backdrop-filter: blur(18px);
+    transform: translateX(-50%);
+    pointer-events: auto;
+    transition:
+      opacity 180ms ease,
+      transform 180ms ease;
+  }
+
+  .heb-landing[data-regional-view="true"] .heb-landing__nav {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-0.65rem);
+    pointer-events: none;
+  }
+
+  .heb-landing__nav a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: 0 0.85rem;
+    border-radius: 999px;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    text-decoration: none;
+    text-shadow: 0 2px 14px rgba(35, 45, 56, 0.26);
+    transition:
+      background-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .heb-landing__nav a:hover,
+  .heb-landing__nav a:focus-visible {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+  }
+
+  .heb-landing__intro {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    display: grid;
+    place-items: center;
+    border: 0;
+    outline: none;
+    pointer-events: none;
+  }
+
+  .heb-landing__copy {
+    position: relative;
+    z-index: 10;
+    width: min(92vw, 980px);
+    padding: 0 1.25rem;
+    text-align: center;
+    text-shadow:
+      0 12px 34px rgba(40, 48, 58, 0.32),
+      0 2px 12px rgba(80, 17, 22, 0.16);
+    transform-origin: center;
+    will-change: opacity, transform;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .heb-landing[data-view-state="state-network"] .heb-landing__copy,
+  .heb-landing[data-view-state="regional"] .heb-landing__copy {
+    visibility: hidden;
+    opacity: 0;
+    transform: scale(0.88);
+    pointer-events: none;
+  }
+
+  .heb-landing__copy:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.8);
+    outline-offset: 0.8rem;
+  }
+
+  .heb-landing__eyebrow {
+    margin: 0 0 0.65rem;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: clamp(0.72rem, 1.3vw, 0.9rem);
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__copy h1 {
+    margin: 0;
+    color: #fff;
+    font-size: clamp(3.3rem, 10vw, 8.8rem);
+    font-weight: 900;
+    letter-spacing: 0;
+    line-height: 0.9;
+  }
+
+  .heb-landing__subtitle {
+    margin: clamp(0.7rem, 2vw, 1.2rem) 0 0;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: clamp(1.05rem, 2.4vw, 1.65rem);
+    font-weight: 750;
+    letter-spacing: 0;
+  }
+
+  .heb-landing__actions {
+    position: absolute;
+    bottom: clamp(1.2rem, 5.5vw, 3.6rem);
+    left: 50%;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    width: min(92vw, 520px);
+    transform: translateX(-50%);
+    transition:
+      opacity 180ms ease,
+      transform 180ms ease;
+    pointer-events: none;
+  }
+
+  .heb-landing[data-regional-view="true"] .heb-landing__actions {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(0.65rem);
+  }
+
+  .heb-landing__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 10.5rem;
+    min-height: 3.05rem;
+    padding: 0 1.35rem;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.78rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    line-height: 1;
+    text-decoration: none;
+    box-shadow:
+      0 18px 36px rgba(42, 52, 63, 0.24),
+      inset 0 1px 0 rgba(255, 255, 255, 0.24);
+    backdrop-filter: blur(16px);
+    transition:
+      background-color 180ms ease,
+      border-color 180ms ease,
+      transform 180ms ease;
+    pointer-events: auto;
+  }
+
+  .heb-landing__button:hover,
+  .heb-landing__button:focus-visible {
+    transform: translateY(-2px);
+  }
+
+  .heb-landing__button--primary {
+    background: rgba(225, 25, 33, 0.9);
+  }
+
+  .heb-landing__button--secondary {
+    background: rgba(255, 255, 255, 0.16);
+  }
+
+  .heb-landing__button--primary:hover,
+  .heb-landing__button--primary:focus-visible {
+    background: rgba(239, 40, 48, 0.96);
+  }
+
+  .heb-landing__button--secondary:hover,
+  .heb-landing__button--secondary:focus-visible {
+    background: rgba(255, 255, 255, 0.24);
+  }
+
+  .heb-landing__region-hud {
+    position: absolute;
+    inset: 0;
+    z-index: 11;
+    width: 100vw;
+    height: 100vh;
+    color: #fff;
+    text-align: center;
+    text-shadow: 0 12px 30px rgba(24, 32, 42, 0.38);
+    pointer-events: none;
+  }
+
+  .heb-landing__region-hud[hidden] {
+    display: none;
+  }
+
+  .heb-landing__region-title {
+    position: absolute;
+    top: clamp(1rem, 3vh, 1.9rem);
+    left: 50%;
+    width: min(92vw, 620px);
+    padding: 0 1rem;
+    transform: translateX(-50%);
+    opacity: 0;
+    will-change: opacity;
+    pointer-events: none;
+  }
+
+  .heb-landing__region-kicker {
+    margin: 0 0 0.45rem;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__region-hud h2 {
+    margin: 0;
+    color: #fff;
+    font-size: clamp(0.9rem, 1.6vw, 1.35rem);
+    font-weight: 950;
+    letter-spacing: 0;
+    line-height: 1;
+  }
+
+  .heb-landing__region-return {
+    position: absolute;
+    bottom: clamp(1.2rem, 6vh, 3.9rem);
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.7rem;
+    padding: 0 1.15rem;
+    border: 1px solid rgba(255, 255, 255, 0.32);
+    border-radius: 999px;
+    color: #fff;
+    background: rgba(15, 19, 24, 0.36);
+    box-shadow:
+      0 18px 34px rgba(24, 32, 42, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    line-height: 1;
+    text-transform: uppercase;
+    backdrop-filter: blur(16px);
+    cursor: pointer;
+    opacity: 0;
+    transform: translateX(-50%);
+    will-change: opacity;
+    pointer-events: auto;
+    transition:
+      background-color 180ms ease,
+      transform 180ms ease;
+  }
+
+  .heb-landing__region-return:hover,
+  .heb-landing__region-return:focus-visible {
+    background: rgba(225, 25, 33, 0.82);
+    transform: translateX(-50%) translateY(-2px);
+  }
+
+  @media (max-width: 720px) {
+    .heb-landing {
+      min-height: 100svh;
+    }
+
+    .heb-landing__nav {
+      width: calc(100vw - 1rem);
+      gap: 0.15rem;
+      padding: 0.35rem;
+    }
+
+    .heb-landing__nav a {
+      min-height: 2.05rem;
+      padding: 0 0.55rem;
+      font-size: 0.72rem;
+    }
+
+    .heb-landing__copy {
+      width: min(94vw, 520px);
+    }
+
+    .heb-landing__actions {
+      bottom: max(1rem, env(safe-area-inset-bottom));
+      gap: 0.55rem;
+    }
+
+    .heb-landing__button {
+      flex: 1 1 8.5rem;
+      min-width: 0;
+      min-height: 2.8rem;
+      padding: 0 0.9rem;
+      font-size: 0.72rem;
+    }
+  }
+
+  @media (max-width: 430px) {
+    .heb-landing__copy h1 {
+      font-size: clamp(2.7rem, 15vw, 4rem);
+      line-height: 0.95;
+    }
+
+    .heb-landing__subtitle {
+      font-size: 1rem;
+    }
+  }
+</style>
