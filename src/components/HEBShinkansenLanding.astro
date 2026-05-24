@@ -61,6 +61,32 @@ const stationCount = hebStoreData.length;
         data-region-return>Return to State View</button
       >
     </div>
+
+    <aside
+      class="heb-landing__selection-panel"
+      data-selection-panel
+      aria-label="Selected H-E-B stations"
+      hidden
+    >
+      <header class="heb-landing__selection-panel-header">
+        <p class="heb-landing__selection-panel-kicker">Your Traversal</p>
+        <h3 class="heb-landing__selection-panel-title">Selected Stations</h3>
+        <p
+          class="heb-landing__selection-panel-count"
+          data-selection-count
+          aria-live="polite">0 stations</p
+        >
+      </header>
+      <ol
+        class="heb-landing__selection-list"
+        data-selection-list
+        role="list"
+      >
+      </ol>
+      <p class="heb-landing__selection-empty" data-selection-empty>
+        Click a 3D station to add it to your route.
+      </p>
+    </aside>
   </div>
 </section>
 
@@ -87,6 +113,18 @@ const stationCount = hebStoreData.length;
   const regionReturn = root?.querySelector<HTMLButtonElement>(
     "[data-region-return]",
   );
+  const selectionPanel = root?.querySelector<HTMLElement>(
+    "[data-selection-panel]",
+  );
+  const selectionList = root?.querySelector<HTMLOListElement>(
+    "[data-selection-list]",
+  );
+  const selectionCount = root?.querySelector<HTMLElement>(
+    "[data-selection-count]",
+  );
+  const selectionEmpty = root?.querySelector<HTMLElement>(
+    "[data-selection-empty]",
+  );
 
   if (
     root &&
@@ -95,7 +133,11 @@ const stationCount = hebStoreData.length;
     regionHud &&
     regionTitlePanel &&
     regionTitle &&
-    regionReturn
+    regionReturn &&
+    selectionPanel &&
+    selectionList &&
+    selectionCount &&
+    selectionEmpty
   ) {
     type SvgPoint = { x: number; y: number };
     type SvgBounds = { minX: number; maxX: number; minY: number; maxY: number };
@@ -137,7 +179,10 @@ const stationCount = hebStoreData.length;
     type ViewState = "landing" | "state-network" | "regional";
     type StationMode = "hidden" | "state" | "regional";
     type StoreTileEntry = {
+      storeId: string;
       modelGroup: THREE.Group;
+      storeModel: THREE.Group;
+      baseModelScale: number;
       stateMarkerGroup: THREE.Group;
       stateMarkerModel: THREE.Group;
       stateMarkerScale: number;
@@ -157,6 +202,8 @@ const stationCount = hebStoreData.length;
       ) => void;
       onRemove: () => void;
       setMode: (mode: StationMode, regionId?: string) => void;
+      setHoveredStore: (storeId: string | null) => void;
+      pulseStore: (storeId: string) => void;
     };
 
     const svgSnapPrecision = 0.001;
@@ -297,6 +344,16 @@ const stationCount = hebStoreData.length;
       createRegionFeatureCollection(),
     );
 
+    type SelectedStation = {
+      id: string;
+      name: string;
+      address: string;
+      city: string;
+      zip: string;
+      regionId: string;
+      regionName: string;
+    };
+
     let map: MapLibreMap | undefined;
     let mapReady = false;
     let viewState: ViewState = "landing";
@@ -304,6 +361,11 @@ const stationCount = hebStoreData.length;
     let returnViewState: Exclude<ViewState, "regional"> = "landing";
     let isTransitioning = false;
     let storeTileLayer: StoreTileLayer | undefined;
+    const selectedStations: SelectedStation[] = [];
+    // Tracks the store id currently under the cursor on the stations layer so
+    // we can drive the 3D hover animation. MapLibre fires `mousemove` over a
+    // layer many times per second; we early-return when the id doesn't change.
+    let hoveredStationId: string | null = null;
 
     map = createMap();
     introCopy.addEventListener("click", revealStateNetwork);
@@ -361,8 +423,13 @@ const stationCount = hebStoreData.length;
       instance.on("mouseenter", mapLayerIds.stations, () => {
         instance.getCanvas().style.cursor = "pointer";
       });
+      instance.on("mousemove", mapLayerIds.stations, handleStationMouseMove);
       instance.on("mouseleave", mapLayerIds.stations, () => {
         instance.getCanvas().style.cursor = "";
+        // Clear hover state when the cursor leaves the layer entirely so the
+        // last-hovered building scales back to its base size.
+        hoveredStationId = null;
+        storeTileLayer?.setHoveredStore(null);
       });
       instance.on("click", mapLayerIds.stations, handleStationMapClick);
 
@@ -517,8 +584,15 @@ const stationCount = hebStoreData.length;
       let hasPlayedStateMarkerReveal = false;
       let stateMarkerRevealFrame = 0;
       const tileEntries: StoreTileEntry[] = [];
+      const tileEntriesById = new Map<string, StoreTileEntry>();
       const ownedGeometries = new Set<THREE.BufferGeometry>();
       const ownedMaterials = new Set<THREE.Material>();
+      const hoverScaleFactor = 1.18;
+      const pulseScaleFactor = 1.32;
+      const hoverDurationMs = 220;
+      const pulseDurationMs = 420;
+      let hoveredStoreId: string | null = null;
+      const activePulseStoreIds = new Set<string>();
 
       const applyVisibility = (animateStateReveal = false) => {
         if (activeMode !== "state") {
@@ -638,21 +712,26 @@ const stationCount = hebStoreData.length;
             ownedMaterials,
           );
           storeDefinitions.forEach((store) => {
-            const modelGroup = createStoreModelGroup(store, normalizedModel);
+            const storeBuild = createStoreModelGroup(store, normalizedModel);
             const stateMarker = createStateMarkerGroup(store, normalizedMarker);
-            tileEntries.push({
-              modelGroup,
+            const entry: StoreTileEntry = {
+              storeId: store.id,
+              modelGroup: storeBuild.group,
+              storeModel: storeBuild.model,
+              baseModelScale: storeBuild.baseScale,
               stateMarkerGroup: stateMarker.group,
               stateMarkerModel: stateMarker.marker,
               stateMarkerScale: stateMarker.scale,
               regionId: store.regionId,
-            });
+            };
+            tileEntries.push(entry);
+            tileEntriesById.set(store.id, entry);
             scene?.add(stateMarker.group);
-            scene?.add(modelGroup);
+            scene?.add(storeBuild.group);
             if (!loggedStoreModelBounds) {
               loggedStoreModelBounds = true;
-              modelGroup.updateMatrixWorld(true);
-              const bounds = new THREE.Box3().setFromObject(modelGroup);
+              storeBuild.group.updateMatrixWorld(true);
+              const bounds = new THREE.Box3().setFromObject(storeBuild.group);
               console.log("H-E-B store model world-space bounding box", {
                 min: bounds.min.toArray(),
                 max: bounds.max.toArray(),
@@ -668,6 +747,96 @@ const stationCount = hebStoreData.length;
         } finally {
           dracoLoader.dispose();
         }
+      };
+
+      const tweenStoreScale = (
+        entry: StoreTileEntry,
+        targetScale: number,
+        durationMs: number,
+        onComplete?: () => void,
+      ) => {
+        const proxy = { value: entry.storeModel.scale.x };
+        const animation = animate(proxy, {
+          value: targetScale,
+          duration: reduceMotion ? 0 : durationMs,
+          ease: "outQuad",
+          onUpdate: () => {
+            entry.storeModel.scale.setScalar(proxy.value);
+            mapInstance?.triggerRepaint();
+          },
+          onComplete: () => {
+            entry.storeModel.scale.setScalar(targetScale);
+            mapInstance?.triggerRepaint();
+            onComplete?.();
+          },
+        });
+        return animation;
+      };
+
+      const setHoveredStore = (storeId: string | null) => {
+        if (storeId === hoveredStoreId) {
+          return;
+        }
+        const previousId = hoveredStoreId;
+        hoveredStoreId = storeId;
+
+        if (previousId) {
+          const previousEntry = tileEntriesById.get(previousId);
+          if (
+            previousEntry &&
+            previousEntry.modelGroup.visible &&
+            !activePulseStoreIds.has(previousId)
+          ) {
+            tweenStoreScale(
+              previousEntry,
+              previousEntry.baseModelScale,
+              hoverDurationMs,
+            );
+          }
+        }
+
+        if (storeId) {
+          const entry = tileEntriesById.get(storeId);
+          if (
+            entry &&
+            entry.modelGroup.visible &&
+            !activePulseStoreIds.has(storeId)
+          ) {
+            tweenStoreScale(
+              entry,
+              entry.baseModelScale * hoverScaleFactor,
+              hoverDurationMs,
+            );
+          }
+        }
+      };
+
+      const pulseStore = (storeId: string) => {
+        const entry = tileEntriesById.get(storeId);
+        if (!entry || !entry.modelGroup.visible) {
+          return;
+        }
+
+        activePulseStoreIds.add(storeId);
+        tweenStoreScale(
+          entry,
+          entry.baseModelScale * pulseScaleFactor,
+          Math.round(pulseDurationMs * 0.45),
+          () => {
+            const restingScale =
+              hoveredStoreId === storeId
+                ? entry.baseModelScale * hoverScaleFactor
+                : entry.baseModelScale;
+            tweenStoreScale(
+              entry,
+              restingScale,
+              Math.round(pulseDurationMs * 0.55),
+              () => {
+                activePulseStoreIds.delete(storeId);
+              },
+            );
+          },
+        );
       };
 
       return {
@@ -740,6 +909,13 @@ const stationCount = hebStoreData.length;
           if (mode === "hidden") {
             hasPlayedStateMarkerReveal = false;
           }
+          if (mode !== "regional") {
+            hoveredStoreId = null;
+            activePulseStoreIds.clear();
+            tileEntries.forEach((entry) => {
+              entry.storeModel.scale.setScalar(entry.baseModelScale);
+            });
+          }
           applyVisibility(
             mode === "state" &&
               previousMode !== "state" &&
@@ -747,6 +923,8 @@ const stationCount = hebStoreData.length;
           );
           mapInstance?.triggerRepaint();
         },
+        setHoveredStore,
+        pulseStore,
       };
     }
 
@@ -993,7 +1171,7 @@ const stationCount = hebStoreData.length;
       group.userData.storeModel = model;
       group.add(model);
 
-      return group;
+      return { group, model, baseScale: modelScale };
     }
 
     function createStateMarkerGroup(
@@ -1124,7 +1302,10 @@ const stationCount = hebStoreData.length;
           id: store.id,
           properties: {
             id: store.id,
+            name: `H-E-B ${store.city}`,
+            address: store.address,
             city: store.city,
+            zip: store.zip,
             regionId: store.regionId,
             regionName: store.regionName,
             hub: store.hub,
@@ -1197,21 +1378,164 @@ const stationCount = hebStoreData.length;
       enterRegionalView(regionId);
     }
 
+    function handleStationMouseMove(event: MapLayerMouseEvent) {
+      const stationId = event.features?.[0]?.properties?.id as
+        | string
+        | undefined;
+      // Only react when the hovered building actually changes — `mousemove`
+      // can fire dozens of times per second while the cursor sits on one
+      // building. Idempotent calls into the layer would still cancel and
+      // restart the anime.js tween every frame.
+      if (!stationId || stationId === hoveredStationId) {
+        return;
+      }
+      hoveredStationId = stationId;
+      // Hover animation only makes sense when the regional store models are
+      // actually on-screen. In state view the click target is a flat invisible
+      // extrusion (no 3D building to scale), so we skip the call.
+      if (viewState === "regional") {
+        storeTileLayer?.setHoveredStore(stationId);
+      }
+    }
+
     function handleStationMapClick(event: MapLayerMouseEvent) {
       const station = event.features?.[0]?.properties;
       if (!station) {
         return;
       }
 
-      root.dataset.selectedStationId = String(station.id ?? "");
+      const stationId = station.id as string | undefined;
+      root.dataset.selectedStationId = String(stationId ?? "");
       root.dataset.selectedStationCity = String(station.city ?? "");
+
+      // State-view click: enter regional view. This dispatch happens BEFORE
+      // we append to the selection panel so the click that bridges state →
+      // regional also records the chosen station as the first traversal stop.
       if (viewState === "state-network" && !isTransitioning) {
         const regionId = station.regionId as string | undefined;
-        const stationId = station.id as string | undefined;
         if (regionId && regionId !== "statewide") {
           enterRegionalView(regionId, stationId);
         }
       }
+
+      // Build a typed snapshot from the feature properties. We use feature
+      // properties (not a lookup into storeDefinitions) so the data path is
+      // a single source of truth — whatever was rendered IS what we record.
+      if (!stationId) {
+        return;
+      }
+      const selection: SelectedStation = {
+        id: stationId,
+        name: String(station.name ?? `H-E-B ${station.city ?? ""}`),
+        address: String(station.address ?? ""),
+        city: String(station.city ?? ""),
+        zip: String(station.zip ?? ""),
+        regionId: String(station.regionId ?? ""),
+        regionName: String(station.regionName ?? ""),
+      };
+
+      addSelectedStation(selection);
+
+      // Reactive feedback on the 3D model itself: a quick scale pulse so the
+      // user can see WHICH building they just registered. No-op if the model
+      // isn't currently visible (e.g. click happened during the regional
+      // fly-in before the regional models were toggled on).
+      storeTileLayer?.pulseStore(stationId);
+    }
+
+    function addSelectedStation(selection: SelectedStation) {
+      // Dedupe by id — a "traversal route" implies each station appears at
+      // most once. If the user re-clicks an already-selected building we do
+      // nothing (intentional; the panel is additive, not a counter).
+      if (selectedStations.some((entry) => entry.id === selection.id)) {
+        return;
+      }
+      selectedStations.push(selection);
+      renderSelectionListItem(selection);
+      updateSelectionMeta();
+    }
+
+    function renderSelectionListItem(selection: SelectedStation) {
+      const item = document.createElement("li");
+      item.className = "heb-landing__selection-item";
+      item.dataset.selectionItem = selection.id;
+
+      const name = document.createElement("p");
+      name.className = "heb-landing__selection-item-name";
+      name.textContent = selection.name;
+
+      const address = document.createElement("p");
+      address.className = "heb-landing__selection-item-address";
+      address.textContent = [selection.address, selection.city, selection.zip]
+        .filter(Boolean)
+        .join(", ");
+
+      const region = document.createElement("p");
+      region.className = "heb-landing__selection-item-region";
+      region.textContent = selection.regionName;
+
+      item.append(name, address, region);
+      selectionList.appendChild(item);
+      animateSelectionItemIn(item);
+    }
+
+    function animateSelectionItemIn(item: HTMLElement) {
+      // Measure natural height by temporarily letting the item lay out at its
+      // intrinsic size. The element is collapsed (height: 0) by CSS so we
+      // can't just read offsetHeight directly. We force a measurement frame
+      // with height: auto + visibility: hidden, capture the height, then
+      // restore the collapsed start state for anime.js to interpolate from.
+      item.style.height = "auto";
+      item.style.opacity = "0";
+      const naturalHeight = item.offsetHeight;
+      item.style.height = "0px";
+
+      if (reduceMotion) {
+        item.style.height = "auto";
+        item.style.opacity = "1";
+        // Scroll the new entry into view inside the panel so users on
+        // reduced-motion still see what was added.
+        selectionPanel.scrollTo({
+          top: selectionPanel.scrollHeight,
+          behavior: "auto",
+        });
+        return;
+      }
+
+      animate(item, {
+        height: [0, naturalHeight],
+        opacity: [0, 1],
+        duration: 420,
+        ease: "outCubic",
+        onComplete: () => {
+          // Release the explicit height so future content / responsive
+          // reflow can adjust the row's height naturally.
+          item.style.height = "auto";
+        },
+      });
+
+      // Auto-scroll the panel so newly-appended items remain visible even
+      // after the list grows past the viewport height.
+      selectionPanel.scrollTo({
+        top: selectionPanel.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+
+    function updateSelectionMeta() {
+      const count = selectedStations.length;
+      selectionCount.textContent = `${count} ${count === 1 ? "station" : "stations"}`;
+      selectionEmpty.hidden = count > 0;
+    }
+
+    function clearSelectedStations() {
+      selectedStations.length = 0;
+      selectionList.replaceChildren();
+      updateSelectionMeta();
+    }
+
+    function setSelectionPanelVisible(isVisible: boolean) {
+      selectionPanel.hidden = !isVisible;
     }
 
     function enterRegionalView(regionId: string, preferredStoreId?: string) {
@@ -1232,6 +1556,11 @@ const stationCount = hebStoreData.length;
       regionTitlePanel.style.opacity = "0";
       regionReturn.style.opacity = "0";
       setStationLayerMode("hidden");
+      // Surface the traversal panel for the duration of the regional view.
+      // updateSelectionMeta keeps the count + empty-state placeholder in
+      // sync with the (possibly-preserved) array on re-entry.
+      setSelectionPanelVisible(true);
+      updateSelectionMeta();
 
       runIntroExit();
       animate(regionTitlePanel, {
@@ -1343,6 +1672,10 @@ const stationCount = hebStoreData.length;
       introCopy.style.visibility = "visible";
       setStationLayerMode("hidden");
       setRouteLayerVisible(false);
+      // Landing is the "start over" state — the user is no longer mid-traversal
+      // so the selection list resets. Panels in non-regional views stay hidden.
+      setSelectionPanelVisible(false);
+      clearSelectedStations();
 
       if (fitCamera) {
         fitTexas(0);
@@ -1363,6 +1696,10 @@ const stationCount = hebStoreData.length;
       introCopy.style.visibility = "hidden";
       setStationLayerMode("state");
       setRouteLayerVisible(false);
+      // Hide the panel while at the state-network view — the panel is the
+      // "regional traversal" log. Selections remain in memory so returning
+      // to regional view shows the same list (no surprise erasure).
+      setSelectionPanelVisible(false);
       syncLodFromZoom();
 
       if (fitCamera) {
@@ -2390,6 +2727,44 @@ const stationCount = hebStoreData.length;
 
   .heb-landing__region-hud[hidden] {
     display: none;
+  }
+
+  /* Selection panel — STRUCTURAL ONLY (positioning + scroll + animation
+     hooks). All visual styling (colors, fonts, sizing, shadows, etc.) is
+     intentionally left to the project stylesheet. */
+  .heb-landing__selection-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    max-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    pointer-events: auto;
+  }
+
+  .heb-landing__selection-panel[hidden] {
+    display: none;
+  }
+
+  .heb-landing__selection-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* Each list item starts collapsed; anime.js animates it to its natural
+     height + full opacity on insert. `will-change` keeps the animation
+     smooth without paint thrash. `overflow: hidden` is required so the
+     height interpolation actually clips during the expand. */
+  .heb-landing__selection-item {
+    overflow: hidden;
+    height: 0;
+    opacity: 0;
+    will-change: height, opacity;
   }
 
   .heb-landing__region-title {
