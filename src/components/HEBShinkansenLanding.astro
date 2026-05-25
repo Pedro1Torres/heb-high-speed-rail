@@ -70,22 +70,19 @@ const stationCount = hebStoreData.length;
     >
       <header class="heb-landing__selection-panel-header">
         <p class="heb-landing__selection-panel-kicker">Your Traversal</p>
-        <h3 class="heb-landing__selection-panel-title">Selected Stations</h3>
+        <h3 class="heb-landing__selection-panel-title">Routes</h3>
         <p
           class="heb-landing__selection-panel-count"
           data-selection-count
           aria-live="polite">0 stations</p
         >
       </header>
-      <ol
-        class="heb-landing__selection-list"
-        data-selection-list
+      <div
+        class="heb-landing__route-accordion"
+        data-route-accordion
         role="list"
       >
-      </ol>
-      <p class="heb-landing__selection-empty" data-selection-empty>
-        Click a 3D station to add it to your route.
-      </p>
+      </div>
     </aside>
   </div>
 </section>
@@ -116,14 +113,11 @@ const stationCount = hebStoreData.length;
   const selectionPanel = root?.querySelector<HTMLElement>(
     "[data-selection-panel]",
   );
-  const selectionList = root?.querySelector<HTMLOListElement>(
-    "[data-selection-list]",
+  const accordionContainer = root?.querySelector<HTMLElement>(
+    "[data-route-accordion]",
   );
   const selectionCount = root?.querySelector<HTMLElement>(
     "[data-selection-count]",
-  );
-  const selectionEmpty = root?.querySelector<HTMLElement>(
-    "[data-selection-empty]",
   );
 
   if (
@@ -135,9 +129,8 @@ const stationCount = hebStoreData.length;
     regionTitle &&
     regionReturn &&
     selectionPanel &&
-    selectionList &&
-    selectionCount &&
-    selectionEmpty
+    accordionContainer &&
+    selectionCount
   ) {
     type SvgPoint = { x: number; y: number };
     type SvgBounds = { minX: number; maxX: number; minY: number; maxY: number };
@@ -178,6 +171,13 @@ const stationCount = hebStoreData.length;
     };
     type ViewState = "landing" | "state-network" | "regional";
     type StationMode = "hidden" | "state" | "regional";
+    type RouteId =
+      | "black"
+      | "blue"
+      | "yellow"
+      | "pink"
+      | "purple"
+      | "orange";
     type StoreTileEntry = {
       storeId: string;
       modelGroup: THREE.Group;
@@ -204,16 +204,68 @@ const stationCount = hebStoreData.length;
       setMode: (mode: StationMode, regionId?: string) => void;
       setHoveredStore: (storeId: string | null) => void;
       pulseStore: (storeId: string) => void;
+      setRoute: (
+        routeId: RouteId,
+        coordinates: GeoJsonPosition[] | null,
+      ) => void;
     };
 
     const svgSnapPrecision = 0.001;
     const openFreeMapStyleUrl = "https://tiles.openfreemap.org/styles/bright";
     const storeModelUrl = "/models/HEB_Store.glb";
     const stateMarkerModelUrl = "/models/HEB_cowboy_hat.glb";
+    const trainModelUrl = "/models/HEB_train_and_tracks.glb";
     const regularStoreFootprintMeters = 1240;
     const hubStoreFootprintMeters = 1620;
+    // ─── Density-based footprint scaling ─────────────────────────────
+    // For sparse regions (West Texas, North Texas) the regional fly-in
+    // lands at a wide zoom and the default 1240m store reads as a
+    // speck. We measure each store's distance to its NEAREST sibling
+    // inside the same region and pick a multiplier from a bucketed
+    // scale: closer neighbors mean smaller buildings (to avoid
+    // overlap), further neighbors mean huge buildings (so the user
+    // can see + click them). Per-city overrides win when a city's two
+    // stores sit so close together that even the smallest bucket
+    // would overlap (Del Rio).
+    //
+    // Regions outside this set keep the default 1× footprint — they're
+    // already dense enough that bumping them risks unintended overlap.
+    const RESIZED_REGIONS = new Set<string>([
+      "west",
+      "north",
+      "east",
+      "gulf",
+      "south",
+      "central",
+    ]);
+    const STORE_MULTIPLIER_OVERRIDES: Record<string, number> = {
+      // Del Rio's two stores sit ~0.95 km apart — closer than the
+      // default building footprint. Anything ≥ 1× overlaps; 0.6×
+      // (744m each) gives ~200 m clearance.
+      "Del Rio": 0.6,
+    };
     const regularStateMarkerFootprintMeters = 18000;
     const hubStateMarkerFootprintMeters = 24000;
+    // Train footprint and speed.
+    // - 4500 m footprint = same order as the cowboy hats so the train reads
+    //   from the state-network zoom AND stays sensibly sized in regional.
+    // - 28000 m/s ≈ 100,800 km/h. Wildly unrealistic, but the camera
+    //   sees a continent; a real train speed would look frozen. Tuned to
+    //   cross a typical region in ~6s and the whole state in ~30s.
+    const trainFootprintMeters = 4500;
+    const trainSpeedMps = 28000;
+    // Time the train sits at each station before continuing — "picking up
+    // passengers". Applied at every station including the two route
+    // endpoints (i.e. the reverse-direction bounce now happens AFTER the
+    // pause, not instead of it). Tune freely.
+    const trainStationPauseMs = 750;
+    // After load, the train model is auto-aligned so its long axis points
+    // along scene +X (which we treat as "nose forward"). If the GLB was
+    // authored with the cab at the −X end of the long axis instead, the
+    // train will run rear-first. Flip this to π to spin the nose 180°
+    // without re-exporting the GLB. π/2 / −π/2 are also valid if the
+    // auto-alignment somehow guesses wrong.
+    const trainFacingOffsetRad = 0;
     const mapStateZoom = 5.1;
     const mapRegionalZoom = 10.25;
     const mapRegionalAnchorZoom = 12.85;
@@ -344,6 +396,72 @@ const stationCount = hebStoreData.length;
       createRegionFeatureCollection(),
     );
 
+    // Precompute each resized-region store's distance to its nearest
+    // same-region neighbor. O(n²) over the resized regions only, so it
+    // runs in microseconds at startup. Haversine is inlined here
+    // because the shared `haversineKm` function is declared later in
+    // the file and module-strict block-scoping puts it in TDZ at this
+    // point — calling it would throw and abort the whole script (which
+    // is why the map briefly stopped rendering).
+    const nearestNeighborKmByStoreId = (() => {
+      const EARTH_KM = 6371.0088;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dist = (
+        lng1: number,
+        lat1: number,
+        lng2: number,
+        lat2: number,
+      ) => {
+        const dLat = toRad(lat2 - lat1);
+        const dLng = toRad(lng2 - lng1);
+        const phi1 = toRad(lat1);
+        const phi2 = toRad(lat2);
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLng = Math.sin(dLng / 2);
+        const a =
+          sinDLat * sinDLat +
+          Math.cos(phi1) * Math.cos(phi2) * sinDLng * sinDLng;
+        return 2 * EARTH_KM * Math.asin(Math.min(1, Math.sqrt(a)));
+      };
+      const map = new Map<string, number>();
+      storeDefinitions.forEach((store) => {
+        if (!RESIZED_REGIONS.has(store.regionId)) return;
+        let minKm = Infinity;
+        storeDefinitions.forEach((other) => {
+          if (other.id === store.id) return;
+          if (other.regionId !== store.regionId) return;
+          const d = dist(store.lng, store.lat, other.lng, other.lat);
+          if (d < minKm) minKm = d;
+        });
+        map.set(store.id, minKm);
+      });
+      return map;
+    })();
+
+    function computeStoreFootprintMultiplier(
+      store: (typeof storeDefinitions)[number],
+    ) {
+      if (!RESIZED_REGIONS.has(store.regionId)) return 1;
+      const explicit = STORE_MULTIPLIER_OVERRIDES[store.city];
+      if (explicit !== undefined) return explicit;
+      const minDistKm =
+        nearestNeighborKmByStoreId.get(store.id) ?? Infinity;
+      // Bucketed scale. The two tightest buckets exist mainly for the
+      // Houston / Gulf Coast cluster, where stores routinely sit
+      // 2-4 km apart — bumping those to the 2.0× bucket would push
+      // their buildings into each other. West/North pairs (Midland
+      // 3.8 km, San Angelo 3.3 km, Waco-cluster ~5 km) sit above the
+      // 3 km cutoff and still get the same 2.0× they had before, so
+      // these new buckets don't shrink anything you'd already approved.
+      if (minDistKm < 2) return 1.0; //  → 1.24 km (very-tight pairs)
+      if (minDistKm < 3) return 1.5; //  → 1.86 km (tight Houston pairs)
+      if (minDistKm < 5) return 2.0; //  → 2.48 km (Midland, San Angelo, Waco)
+      if (minDistKm < 15) return 4.0; //  → 4.96 km (DFW cluster, Odessa pair)
+      if (minDistKm < 40) return 5.0; //  → 6.20 km (Stephenville-ish)
+      if (minDistKm < 80) return 6.0; //  → 7.44 km
+      return 8.0; //                     → 9.92 km (Abilene, Lubbock, Big Spring)
+    }
+
     type SelectedStation = {
       id: string;
       name: string;
@@ -354,6 +472,77 @@ const stationCount = hebStoreData.length;
       regionName: string;
     };
 
+    // Six color-coded routes. The user can build any combination of them;
+    // each owns its own selection list, its own dashed line on the map,
+    // and its own 3D train (a train clone wearing a cowboy hat tinted to
+    // the route's hatColor). Order here is the order they appear in the
+    // accordion. Black is the "default" route and inherits the white hat
+    // (the original cowboy-hat-asset color) so it doesn't get re-tinted.
+    type RouteConfig = {
+      id: RouteId;
+      label: string;
+      lineColor: string;
+      hatColor: string;
+      // Text color used on top of `lineColor` for the hamburger button.
+      // Yellow is the only background light enough to need dark text;
+      // every other route gets white.
+      textColor: string;
+    };
+    const ROUTE_IDS: RouteId[] = [
+      "black",
+      "blue",
+      "yellow",
+      "pink",
+      "purple",
+      "orange",
+    ];
+    const routeConfigs: Record<RouteId, RouteConfig> = {
+      black: {
+        id: "black",
+        label: "Route 1",
+        lineColor: "#0a0a0a",
+        hatColor: "#ffffff",
+        textColor: "#ffffff",
+      },
+      blue: {
+        id: "blue",
+        label: "Route 2",
+        lineColor: "#1f6fc4",
+        hatColor: "#1f6fc4",
+        textColor: "#ffffff",
+      },
+      yellow: {
+        id: "yellow",
+        label: "Route 3",
+        lineColor: "#f5b400",
+        hatColor: "#f5b400",
+        textColor: "#1a1a1a",
+      },
+      pink: {
+        id: "pink",
+        label: "Route 4",
+        lineColor: "#ec4899",
+        hatColor: "#ec4899",
+        textColor: "#ffffff",
+      },
+      purple: {
+        id: "purple",
+        label: "Route 5",
+        lineColor: "#7c47d6",
+        hatColor: "#7c47d6",
+        textColor: "#ffffff",
+      },
+      orange: {
+        id: "orange",
+        label: "Route 6",
+        lineColor: "#ff6a1f",
+        hatColor: "#ff6a1f",
+        textColor: "#ffffff",
+      },
+    };
+    const railroadSourceIdFor = (id: RouteId) => `heb-railroad-route-${id}`;
+    const railroadLayerIdFor = (id: RouteId) => `heb-railroad-track-${id}`;
+
     let map: MapLibreMap | undefined;
     let mapReady = false;
     let viewState: ViewState = "landing";
@@ -361,17 +550,189 @@ const stationCount = hebStoreData.length;
     let returnViewState: Exclude<ViewState, "regional"> = "landing";
     let isTransitioning = false;
     let storeTileLayer: StoreTileLayer | undefined;
-    const selectedStations: SelectedStation[] = [];
+    // Per-route selection arrays. Black starts as the active route so the
+    // first click after launch lands in Route 1.
+    const routeStations: Record<RouteId, SelectedStation[]> = {
+      black: [],
+      blue: [],
+      yellow: [],
+      pink: [],
+      purple: [],
+      orange: [],
+    };
+    let activeRouteId: RouteId = "black";
     // Tracks the store id currently under the cursor on the stations layer so
     // we can drive the 3D hover animation. MapLibre fires `mousemove` over a
     // layer many times per second; we early-return when the id doesn't change.
     let hoveredStationId: string | null = null;
 
+    initRouteAccordion();
     map = createMap();
     introCopy.addEventListener("click", revealStateNetwork);
     introCopy.addEventListener("keydown", handleIntroKeydown);
     regionReturn.addEventListener("click", returnToStateView);
     document.addEventListener("astro:before-swap", disposeMap, { once: true });
+
+    // Build the six accordion sections (one per route) from the
+    // routeConfigs dict. Each section gets a colored badge, a label, a
+    // count, a caret, and an empty selection list inside. The active
+    // route is marked via `data-route-active="true"` on the section so
+    // the CSS can style + reveal it; strict-accordion expansion is also
+    // pure CSS (max-height transition gated by that data attribute).
+    function initRouteAccordion() {
+      ROUTE_IDS.forEach((id) => {
+        const cfg = routeConfigs[id];
+        const section = document.createElement("section");
+        section.className = "heb-landing__route-section";
+        // "active" = which route new map-clicks add to.
+        // "open"   = whether this section's body is currently shown.
+        // They're independent: a user can collapse the active route and
+        // still have new clicks land there, or expand multiple routes
+        // at once to compare them. Initial state: black is active, all
+        // sections start closed (cleaner on first open of the panel).
+        section.dataset.routeSection = id;
+        section.dataset.routeActive = id === activeRouteId ? "true" : "false";
+        section.dataset.routeOpen = "false";
+        section.style.setProperty("--route-color", cfg.lineColor);
+        section.style.setProperty("--route-hat-color", cfg.hatColor);
+        section.style.setProperty("--route-text-color", cfg.textColor);
+
+        const header = document.createElement("button");
+        header.type = "button";
+        header.className = "heb-landing__route-header";
+        header.dataset.routeToggle = id;
+        header.setAttribute("aria-expanded", "false");
+        header.setAttribute("aria-controls", `route-body-${id}`);
+        // Inline the critical color + typography styles. The previous
+        // version relied on CSS variables alone, and external CSS won
+        // specificity on the user's render. Inline styles guarantee
+        // both the route color AND the volks-typo signage typography
+        // (Oswald, uppercase, tracked) actually land.
+        header.style.background = cfg.lineColor;
+        header.style.color = cfg.textColor;
+        header.style.borderColor = "rgba(0, 0, 0, 0.22)";
+        header.style.fontFamily =
+          "Oswald, 'Roboto Condensed', system-ui, sans-serif";
+        header.style.fontWeight = "700";
+        header.style.letterSpacing = "0.18em";
+        header.style.textTransform = "uppercase";
+
+        // Header layout: label (Oswald uppercase) + ETA pill + chevron.
+        // No count is shown here — previously the "0" floated right
+        // next to "Route 1" and read as "Route 10". Per-route count is
+        // implicit in the list items; the panel-level total is in the
+        // panel header.
+        const label = document.createElement("span");
+        label.className = "heb-landing__route-label";
+        label.textContent = cfg.label;
+        // Inline-style the volks-typo signage typography so external
+        // CSS can't override the Bauhaus heading look on the labels.
+        label.style.fontFamily =
+          "Oswald, 'Roboto Condensed', system-ui, sans-serif";
+        label.style.fontWeight = "700";
+        label.style.letterSpacing = "0.18em";
+        label.style.textTransform = "uppercase";
+
+        // ETA pill — populated by updateSelectionMeta whenever the
+        // route mutates. Stays empty (and hidden via :empty CSS) when
+        // the route has fewer than two stations. Inline-styled with
+        // the route's TEXT color as the pill background and the
+        // route's LINE color as the text inside, giving each route a
+        // distinct "stamp" that reads as that route's color identity.
+        const eta = document.createElement("span");
+        eta.className = "heb-landing__route-eta";
+        eta.dataset.routeEta = id;
+        eta.setAttribute("aria-hidden", "true");
+        eta.style.background = cfg.textColor;
+        eta.style.color = cfg.lineColor;
+
+        const icon = document.createElement("span");
+        icon.className = "heb-landing__route-icon";
+        icon.setAttribute("aria-hidden", "true");
+        // Chevron-down glyph. Rotates 180° via CSS when the section is
+        // open, so the affordance reads as a classic dropdown toggle.
+        icon.textContent = "▾";
+
+        header.append(label, eta, icon);
+
+        const body = document.createElement("div");
+        body.className = "heb-landing__route-body";
+        body.dataset.routeBody = id;
+        body.id = `route-body-${id}`;
+        // Inline `display: none` guarantees the body starts collapsed
+        // regardless of what any external stylesheet does to
+        // .heb-landing__route-body. `setRouteOpen` flips this back to
+        // "" (empty string = inherit the stylesheet default) when the
+        // section opens.
+        body.style.display = "none";
+
+        const list = document.createElement("ol");
+        list.className = "heb-landing__selection-list";
+        list.dataset.selectionList = id;
+        list.setAttribute("role", "list");
+
+        const empty = document.createElement("p");
+        empty.className = "heb-landing__selection-empty";
+        empty.dataset.selectionEmpty = id;
+        empty.textContent = "Click stations on the map to add them.";
+
+        body.append(list, empty);
+        section.append(header, body);
+        accordionContainer.appendChild(section);
+
+        header.addEventListener("click", () => toggleRouteOpen(id));
+      });
+    }
+
+    // Click on a route header: mark that route active (so new map
+    // clicks land there) AND flip whether its section is open. Each
+    // section toggles independently — multiple can be open at once,
+    // and the active route can be collapsed if you like.
+    function toggleRouteOpen(routeId: RouteId) {
+      setActiveRoute(routeId);
+      const section = root.querySelector<HTMLElement>(
+        `[data-route-section="${routeId}"]`,
+      );
+      if (!section) return;
+      const wasOpen = section.dataset.routeOpen === "true";
+      setRouteOpen(routeId, !wasOpen);
+    }
+
+    // Imperative setter — used by addSelectedStation to auto-expand on
+    // adds, and could be reused for any future "open this route from
+    // code" path.
+    function setRouteOpen(routeId: RouteId, open: boolean) {
+      const section = root.querySelector<HTMLElement>(
+        `[data-route-section="${routeId}"]`,
+      );
+      if (!section) return;
+      section.dataset.routeOpen = open ? "true" : "false";
+      const body = section.querySelector<HTMLElement>("[data-route-body]");
+      if (body) {
+        // Drive visibility via inline `display` — this beats every
+        // external stylesheet without using `!important`. A previous
+        // attempt relied solely on CSS attribute selectors and the
+        // toggle wasn't visible because something in the cascade
+        // overrode the collapsed state. Inline styles win the cascade
+        // without escalation.
+        body.style.display = open ? "block" : "none";
+      }
+      const header = section.querySelector<HTMLButtonElement>(
+        "[data-route-toggle]",
+      );
+      header?.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function setActiveRoute(routeId: RouteId) {
+      activeRouteId = routeId;
+      ROUTE_IDS.forEach((id) => {
+        const section = root.querySelector<HTMLElement>(
+          `[data-route-section="${id}"]`,
+        );
+        if (!section) return;
+        section.dataset.routeActive = id === routeId ? "true" : "false";
+      });
+    }
 
     function createMap() {
       const instance = new maplibregl.Map({
@@ -400,6 +761,7 @@ const stationCount = hebStoreData.length;
 
       instance.on("load", () => {
         mapReady = true;
+        hideBaseStyleHighwayShields(instance);
         addMapLayers();
         configureMapLight();
         showLanding(false);
@@ -454,6 +816,14 @@ const stationCount = hebStoreData.length;
       map.addSource(mapSourceIds.routes, {
         type: "geojson",
         data: createEmptyFeatureCollection() as never,
+      });
+      // One GeoJSON source per route. Each one carries the dashed
+      // LineString built from its route's selected stations.
+      ROUTE_IDS.forEach((routeId) => {
+        map?.addSource(railroadSourceIdFor(routeId), {
+          type: "geojson",
+          data: createEmptyFeatureCollection() as never,
+        });
       });
 
       map.addLayer(
@@ -517,6 +887,45 @@ const stationCount = hebStoreData.length;
         labelLayerId,
       );
 
+      // One dashed line layer per route, each painted in its route's
+      // configured color. `updateRailroadRoute(routeId)` sets / clears
+      // each source's data when its route's selection mutates. All
+      // routes are visible simultaneously (per design); the active
+      // route is identified via the accordion in the side panel.
+      ROUTE_IDS.forEach((routeId) => {
+        const cfg = routeConfigs[routeId];
+        map?.addLayer(
+          {
+            id: railroadLayerIdFor(routeId),
+            type: "line",
+            source: railroadSourceIdFor(routeId),
+            layout: {
+              "line-cap": "butt",
+              "line-join": "miter",
+            },
+            paint: {
+              "line-color": cfg.lineColor,
+              "line-opacity": 0.92,
+              "line-width": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                4,
+                1.6,
+                7,
+                2.6,
+                10,
+                4,
+                13,
+                5.5,
+              ],
+              "line-dasharray": [2, 2],
+            },
+          },
+          labelLayerId,
+        );
+      });
+
       map.addLayer(
         {
           id: mapLayerIds.stations,
@@ -558,6 +967,40 @@ const stationCount = hebStoreData.length;
       return labelLayer?.id;
     }
 
+    // Walk the base style's loaded layers and hide the highway-shield
+    // badges (e.g. "281", "290", "CR 410"). We target only `symbol`
+    // layers that have an `icon-image` AND come from a road/transport
+    // source-layer — that keeps the road LINES, road TEXT labels, and
+    // non-road icons (city pins etc.) all intact, while killing the
+    // distracting numeric shields you saw in the regional view.
+    function hideBaseStyleHighwayShields(mapInstance: MapLibreMap) {
+      const layers = mapInstance.getStyle().layers ?? [];
+      layers.forEach((layer) => {
+        if (layer.type !== "symbol") return;
+        const iconImage = layer.layout?.["icon-image"];
+        if (!iconImage) return;
+        const sourceLayer = (layer as { "source-layer"?: string })[
+          "source-layer"
+        ];
+        const id = layer.id.toLowerCase();
+        const isRoadIcon =
+          sourceLayer === "transportation" ||
+          sourceLayer === "transportation_name" ||
+          id.includes("highway") ||
+          id.includes("shield") ||
+          id.includes("road") ||
+          id.includes("motorway");
+        if (!isRoadIcon) return;
+        try {
+          mapInstance.setLayoutProperty(layer.id, "visibility", "none");
+        } catch {
+          // Some styles disallow setLayoutProperty on certain layers
+          // (rare, but defensive — we don't want one weird layer to
+          // throw and abort the whole load callback).
+        }
+      });
+    }
+
     function configureMapLight() {
       map?.setLight({
         anchor: "viewport",
@@ -594,6 +1037,521 @@ const stationCount = hebStoreData.length;
       let hoveredStoreId: string | null = null;
       const activePulseStoreIds = new Set<string>();
 
+      // ── Train state ──────────────────────────────────────────────
+      // One TrainState per route. Each carries its own GLB clone (with a
+      // colored cowboy hat attached), its own polyline cache, and its
+      // own progress / pause bookkeeping. `tickTrains()` walks every
+      // route on each render frame; routes with `routeActive=false`
+      // short-circuit immediately so unused routes cost nothing.
+      type TrainSegment = {
+        startLng: number;
+        startLat: number;
+        endLng: number;
+        endLat: number;
+        startMercX: number;
+        startMercY: number;
+        endMercX: number;
+        endMercY: number;
+        length: number;
+        cumulativeStart: number;
+      };
+      type TrainState = {
+        routeId: RouteId;
+        group: THREE.Group | null;
+        modelRoot: THREE.Group | null;
+        hatGroup: THREE.Group | null;
+        baseFootprintScale: number;
+        segments: TrainSegment[];
+        stationDistances: number[];
+        totalLengthMeters: number;
+        progressMeters: number;
+        direction: 1 | -1;
+        lastTickMs: number;
+        pauseEndsAt: number;
+        lastPausedStationIndex: number;
+        routeActive: boolean;
+      };
+      const trains: Record<RouteId, TrainState> = ROUTE_IDS.reduce(
+        (acc, id) => {
+          acc[id] = {
+            routeId: id,
+            group: null,
+            modelRoot: null,
+            hatGroup: null,
+            baseFootprintScale: 1,
+            segments: [],
+            stationDistances: [],
+            totalLengthMeters: 0,
+            progressMeters: 0,
+            direction: 1,
+            lastTickMs: 0,
+            pauseEndsAt: 0,
+            lastPausedStationIndex: -1,
+            routeActive: false,
+          };
+          return acc;
+        },
+        {} as Record<RouteId, TrainState>,
+      );
+      // Shared cowboy-hat template. Populated by `loadStoreModel` when
+      // the GLB lands; `loadTrainModel` clones a tinted copy from this
+      // for each train. Stored at layer scope so the two load paths
+      // can share the same normalized result.
+      let normalizedHatTemplate:
+        | { root: THREE.Group; size: THREE.Vector3 }
+        | null = null;
+      const EARTH_RADIUS_M = 6371008.8;
+
+      const haversineMeters = (
+        lng1: number,
+        lat1: number,
+        lng2: number,
+        lat2: number,
+      ) => {
+        const toRad = (deg: number) => (deg * Math.PI) / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLng = toRad(lng2 - lng1);
+        const phi1 = toRad(lat1);
+        const phi2 = toRad(lat2);
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLng = Math.sin(dLng / 2);
+        const a =
+          sinDLat * sinDLat +
+          Math.cos(phi1) * Math.cos(phi2) * sinDLng * sinDLng;
+        return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(a)));
+      };
+
+      const buildTrainSegments = (coords: GeoJsonPosition[]) => {
+        const segments: TrainSegment[] = [];
+        const stationDists: number[] = [0];
+        let cumulative = 0;
+        for (let i = 0; i < coords.length - 1; i += 1) {
+          const [lng1, lat1] = coords[i];
+          const [lng2, lat2] = coords[i + 1];
+          const start = maplibregl.MercatorCoordinate.fromLngLat(
+            [lng1, lat1],
+            0,
+          );
+          const end = maplibregl.MercatorCoordinate.fromLngLat(
+            [lng2, lat2],
+            0,
+          );
+          const length = haversineMeters(lng1, lat1, lng2, lat2);
+          segments.push({
+            startLng: lng1,
+            startLat: lat1,
+            endLng: lng2,
+            endLat: lat2,
+            startMercX: start.x,
+            startMercY: start.y,
+            endMercX: end.x,
+            endMercY: end.y,
+            length,
+            cumulativeStart: cumulative,
+          });
+          cumulative += length;
+          stationDists.push(cumulative);
+        }
+        return { segments, total: cumulative, stationDists };
+      };
+
+      // Returns mercator XY + heading + per-point meter scale at the
+      // given distance along the supplied segments. Returns null if no
+      // segments are cached. Heading is in radians measured in mercator
+      // space (atan2(dy, dx)); since mercator Y grows southward, a
+      // northbound train has negative dy — which is correct for the
+      // Three.js Z-up rotation we apply.
+      const positionAlongRoute = (state: TrainState, distanceMeters: number) => {
+        if (state.segments.length === 0) return null;
+        const d = Math.max(
+          0,
+          Math.min(state.totalLengthMeters, distanceMeters),
+        );
+        let chosen = state.segments[state.segments.length - 1];
+        for (const seg of state.segments) {
+          if (d <= seg.cumulativeStart + seg.length) {
+            chosen = seg;
+            break;
+          }
+        }
+        const segLen = chosen.length || 1;
+        const t = Math.max(0, Math.min(1, (d - chosen.cumulativeStart) / segLen));
+        const mercX =
+          chosen.startMercX + (chosen.endMercX - chosen.startMercX) * t;
+        const mercY =
+          chosen.startMercY + (chosen.endMercY - chosen.startMercY) * t;
+        const heading = Math.atan2(
+          chosen.endMercY - chosen.startMercY,
+          chosen.endMercX - chosen.startMercX,
+        );
+        const lng =
+          chosen.startLng + (chosen.endLng - chosen.startLng) * t;
+        const lat =
+          chosen.startLat + (chosen.endLat - chosen.startLat) * t;
+        const meterScale = maplibregl.MercatorCoordinate.fromLngLat(
+          [lng, lat],
+          0,
+        ).meterInMercatorCoordinateUnits();
+        return { mercX, mercY, heading, meterScale };
+      };
+
+      const applyTrainPose = (state: TrainState) => {
+        if (!state.group) return;
+        if (!state.routeActive || state.segments.length === 0) {
+          state.group.visible = false;
+          return;
+        }
+        const p = positionAlongRoute(state, state.progressMeters);
+        if (!p) return;
+        state.group.visible = true;
+        state.group.position.set(p.mercX, p.mercY, 0);
+        state.group.scale.setScalar(p.meterScale * state.baseFootprintScale);
+        const reverseFlip = state.direction === -1 ? Math.PI : 0;
+        state.group.rotation.set(
+          0,
+          0,
+          p.heading + reverseFlip + trainFacingOffsetRad,
+        );
+      };
+
+      const tickTrain = (state: TrainState) => {
+        if (
+          !state.routeActive ||
+          !state.group ||
+          state.totalLengthMeters <= 0 ||
+          state.segments.length === 0
+        ) {
+          state.lastTickMs = 0;
+          return;
+        }
+        const now = performance.now();
+
+        // ── Pause handling ──────────────────────────────────────────
+        if (state.pauseEndsAt > 0) {
+          if (now < state.pauseEndsAt) {
+            state.lastTickMs = now;
+            return;
+          }
+          state.pauseEndsAt = 0;
+          if (state.lastPausedStationIndex === state.stationDistances.length - 1) {
+            state.direction = -1;
+          } else if (state.lastPausedStationIndex === 0) {
+            state.direction = 1;
+          }
+          state.progressMeters = Math.max(
+            0,
+            Math.min(
+              state.totalLengthMeters,
+              state.progressMeters + state.direction * 0.5,
+            ),
+          );
+          state.lastPausedStationIndex = -1;
+          state.lastTickMs = now;
+        }
+
+        if (state.lastTickMs === 0) {
+          state.lastTickMs = now;
+        }
+        const dt = Math.min(0.1, (now - state.lastTickMs) / 1000);
+        state.lastTickMs = now;
+
+        const oldProgress = state.progressMeters;
+        const stepped = oldProgress + state.direction * trainSpeedMps * dt;
+
+        // ── Station-crossing detection ──────────────────────────────
+        let hitIdx = -1;
+        let hitDist = -1;
+        for (let i = 0; i < state.stationDistances.length; i += 1) {
+          const d = state.stationDistances[i];
+          if (state.direction === 1) {
+            if (d > oldProgress && d <= stepped) {
+              if (hitIdx === -1 || d < hitDist) {
+                hitIdx = i;
+                hitDist = d;
+              }
+            }
+          } else if (state.direction === -1) {
+            if (d < oldProgress && d >= stepped) {
+              if (hitIdx === -1 || d > hitDist) {
+                hitIdx = i;
+                hitDist = d;
+              }
+            }
+          }
+        }
+
+        if (hitIdx !== -1) {
+          state.progressMeters = hitDist;
+          state.pauseEndsAt = now + trainStationPauseMs;
+          state.lastPausedStationIndex = hitIdx;
+          applyTrainPose(state);
+          return;
+        }
+
+        // ── Defensive endpoint clamp ───────────────────────────────
+        let newProgress = stepped;
+        if (newProgress > state.totalLengthMeters) {
+          newProgress = state.totalLengthMeters;
+          state.pauseEndsAt = now + trainStationPauseMs;
+          state.lastPausedStationIndex = state.stationDistances.length - 1;
+        } else if (newProgress < 0) {
+          newProgress = 0;
+          state.pauseEndsAt = now + trainStationPauseMs;
+          state.lastPausedStationIndex = 0;
+        }
+
+        state.progressMeters = newProgress;
+        applyTrainPose(state);
+      };
+
+      // Per-frame entry point: tick every route's train. Routes that
+      // aren't active (routeActive=false) early-return inside tickTrain
+      // and cost essentially nothing.
+      const tickTrains = () => {
+        ROUTE_IDS.forEach((id) => tickTrain(trains[id]));
+      };
+
+      const setRoute = (
+        routeId: RouteId,
+        coordinates: GeoJsonPosition[] | null,
+      ) => {
+        const state = trains[routeId];
+        if (!coordinates || coordinates.length < 2) {
+          state.routeActive = false;
+          state.segments = [];
+          state.stationDistances = [];
+          state.totalLengthMeters = 0;
+          state.progressMeters = 0;
+          state.direction = 1;
+          state.lastTickMs = 0;
+          state.pauseEndsAt = 0;
+          state.lastPausedStationIndex = -1;
+          if (state.group) state.group.visible = false;
+          mapInstance?.triggerRepaint();
+          return;
+        }
+        const { segments, total, stationDists } =
+          buildTrainSegments(coordinates);
+        state.segments = segments;
+        state.stationDistances = stationDists;
+        state.totalLengthMeters = total;
+        // "Continue from current position" — clamp existing progress to
+        // the new total length so the train picks up from wherever it
+        // was on the previous polyline.
+        state.progressMeters = Math.max(
+          0,
+          Math.min(state.progressMeters, total),
+        );
+        state.pauseEndsAt = 0;
+        state.lastPausedStationIndex = -1;
+        const sittingAt = stationDists.findIndex(
+          (d) => Math.abs(d - state.progressMeters) < 1,
+        );
+        if (sittingAt !== -1) {
+          state.pauseEndsAt = performance.now() + trainStationPauseMs;
+          state.lastPausedStationIndex = sittingAt;
+        }
+        state.routeActive = true;
+        applyTrainPose(state);
+        mapInstance?.triggerRepaint();
+      };
+
+      // Builds a tinted clone of the cowboy-hat template to sit on top of
+      // each train. The hat's materials are CLONED before tinting so the
+      // six per-route hats don't share a material — otherwise tinting
+      // one would tint them all.
+      const buildTrainHat = (
+        template: { root: THREE.Group; size: THREE.Vector3 },
+        hatColor: string,
+        trainSize: THREE.Vector3,
+      ) => {
+        const hatRoot = template.root.clone(true);
+        hatRoot.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const cloneMat = (m: THREE.Material) => {
+            const c = m.clone();
+            const tintable = c as THREE.MeshStandardMaterial & {
+              color?: THREE.Color;
+              emissive?: THREE.Color;
+              transparent?: boolean;
+              opacity?: number;
+              depthWrite?: boolean;
+              depthTest?: boolean;
+              alphaTest?: number;
+            };
+            tintable.needsUpdate = true;
+            tintable.side = THREE.FrontSide;
+            tintable.transparent = false;
+            tintable.opacity = 1;
+            tintable.depthWrite = true;
+            tintable.depthTest = true;
+            tintable.alphaTest = 0;
+            // The black route's hat stays the original asset white; all
+            // others get tinted to the route's hatColor.
+            if (hatColor.toLowerCase() !== "#ffffff") {
+              tintable.color?.set(hatColor);
+            }
+            ownedMaterials.add(c);
+            return c;
+          };
+          if (Array.isArray(mesh.material)) {
+            mesh.material = mesh.material.map(cloneMat);
+          } else {
+            mesh.material = cloneMat(mesh.material);
+          }
+          mesh.renderOrder = 19;
+          mesh.frustumCulled = false;
+        });
+
+        // Size the hat to ~45% of the train's footprint and perch it on
+        // top of the train at z = train_max_z + small_gap. We work in
+        // the train group's local coords (GLB-meters), so the per-frame
+        // scale applied to the train group scales both train and hat
+        // together — keeping their relative proportions constant.
+        const hatBounds = new THREE.Box3().setFromObject(hatRoot);
+        const hatSize = hatBounds.getSize(new THREE.Vector3());
+        const hatFootprint = Math.max(hatSize.x, hatSize.y, 0.0001);
+        const trainFootprint = Math.max(trainSize.x, trainSize.y, 0.0001);
+        const hatScale = (trainFootprint * 0.45) / hatFootprint;
+        hatRoot.scale.setScalar(hatScale);
+        const trainTopZ = trainSize.z;
+        hatRoot.position.set(0, 0, trainTopZ + trainSize.z * 0.02);
+
+        return hatRoot;
+      };
+
+      const loadTrainModel = async () => {
+        const loader = new GLTFLoader();
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath("/libs/draco/");
+        loader.setDRACOLoader(dracoLoader);
+        try {
+          const gltf = await loader.loadAsync(trainModelUrl);
+          if (disposed || !scene) {
+            return;
+          }
+          const source = gltf.scene;
+
+          // Build the train template ONCE (filter out the GLB's bundled
+          // track meshes, normalize orientation, align long axis to +X),
+          // then clone it per route and attach a tinted hat to each
+          // clone. The template's geometry is shared across clones, but
+          // each clone gets its own material instances so per-route
+          // material tweaks (the hat tint specifically) don't bleed.
+          const trainOnly = new THREE.Group();
+          source.children.slice().forEach((child) => {
+            const name = child.name.toLowerCase();
+            const looksLikeTrack =
+              name.includes("track") ||
+              name.includes("rail") ||
+              name.includes("sleeper") ||
+              name.includes("tie");
+            if (!looksLikeTrack) {
+              trainOnly.add(child.clone(true));
+            }
+          });
+          const templateModel =
+            trainOnly.children.length > 0 ? trainOnly : source.clone(true);
+
+          // Y-up GLB → Z-up world (same convention as the store & hat).
+          templateModel.rotation.x = Math.PI / 2;
+
+          templateModel.traverse((object) => {
+            const mesh = object as THREE.Mesh;
+            if (!mesh.isMesh) return;
+            ownedGeometries.add(mesh.geometry);
+            getMeshMaterials(mesh).forEach((material) => {
+              const m = material as THREE.MeshStandardMaterial & {
+                opacity?: number;
+                transparent?: boolean;
+                depthWrite?: boolean;
+                depthTest?: boolean;
+                alphaTest?: number;
+              };
+              m.needsUpdate = true;
+              m.side = THREE.FrontSide;
+              m.transparent = false;
+              m.opacity = 1;
+              m.depthWrite = true;
+              m.depthTest = true;
+              m.alphaTest = 0;
+              ownedMaterials.add(material);
+            });
+            mesh.renderOrder = 18;
+            mesh.frustumCulled = false;
+          });
+
+          templateModel.updateMatrixWorld(true);
+          const bounds = new THREE.Box3().setFromObject(templateModel);
+          const center = bounds.getCenter(new THREE.Vector3());
+          templateModel.position.x -= center.x;
+          templateModel.position.y -= center.y;
+          templateModel.position.z -= bounds.min.z;
+
+          const templateRoot = new THREE.Group();
+          templateRoot.add(templateModel);
+          templateRoot.updateMatrixWorld(true);
+
+          // Long-axis alignment — see earlier comment.
+          {
+            const preAlignSize = new THREE.Box3()
+              .setFromObject(templateRoot)
+              .getSize(new THREE.Vector3());
+            if (preAlignSize.y > preAlignSize.x) {
+              templateRoot.rotation.z = -Math.PI / 2;
+              templateRoot.updateMatrixWorld(true);
+            }
+          }
+
+          const templateSize = new THREE.Box3()
+            .setFromObject(templateRoot)
+            .getSize(new THREE.Vector3());
+          const footprint = Math.max(templateSize.x, templateSize.y, 0.0001);
+          const baseFootprintScale = trainFootprintMeters / footprint;
+
+          // Now build one clone per route, attach a tinted hat to each,
+          // and seed the corresponding TrainState.
+          ROUTE_IDS.forEach((id) => {
+            const cfg = routeConfigs[id];
+            const state = trains[id];
+            const modelClone = templateRoot.clone(true);
+            const group = new THREE.Group();
+            group.add(modelClone);
+            group.visible = false;
+
+            if (normalizedHatTemplate) {
+              const hat = buildTrainHat(
+                normalizedHatTemplate,
+                cfg.hatColor,
+                templateSize,
+              );
+              group.add(hat);
+              state.hatGroup = hat;
+            }
+
+            scene?.add(group);
+            state.group = group;
+            state.modelRoot = modelClone;
+            state.baseFootprintScale = baseFootprintScale;
+
+            // If `updateRailroadRoute` ran before the GLB finished
+            // loading, the route data is already cached on the state.
+            // Apply the pose now so the train shows up at the right
+            // place on the very first render frame after load.
+            if (state.routeActive) {
+              applyTrainPose(state);
+            }
+          });
+
+          mapInstance?.triggerRepaint();
+        } catch (error) {
+          console.warn("Unable to load H-E-B train model:", error);
+        } finally {
+          dracoLoader.dispose();
+        }
+      };
+
       const applyVisibility = (animateStateReveal = false) => {
         if (activeMode !== "state") {
           cancelStateMarkerReveal();
@@ -605,9 +1563,19 @@ const stationCount = hebStoreData.length;
           entry.modelGroup.visible =
             activeMode === "regional" &&
             (!activeRegionId || entry.regionId === activeRegionId);
+          // Always set an explicit marker scale when toggling visibility.
+          // Previously the "animating into state" branch left the scale
+          // untouched and relied on the RAF tick to overwrite it on the
+          // next frame. If anything cancelled the tick before all entries
+          // reached progress=1, the scale could stick at a near-zero value
+          // and the hat would look "gone" until the next state↔regional
+          // toggle. Now: hidden → 0.001, animating → 0.001 (so the tick
+          // tweens UP), resting → full scale. No mid-tween orphan state.
           if (!showStateMarker) {
             entry.stateMarkerModel.scale.setScalar(0.001);
-          } else if (!animateStateReveal) {
+          } else if (animateStateReveal) {
+            entry.stateMarkerModel.scale.setScalar(0.001);
+          } else {
             entry.stateMarkerModel.scale.setScalar(entry.stateMarkerScale);
           }
         });
@@ -711,6 +1679,9 @@ const stationCount = hebStoreData.length;
             ownedGeometries,
             ownedMaterials,
           );
+          // Publish the hat template to layer scope so `loadTrainModel`
+          // can clone tinted copies for each route's train.
+          normalizedHatTemplate = normalizedMarker;
           storeDefinitions.forEach((store) => {
             const storeBuild = createStoreModelGroup(store, normalizedModel);
             const stateMarker = createStateMarkerGroup(store, normalizedMarker);
@@ -871,13 +1842,30 @@ const stationCount = hebStoreData.length;
           renderer.outputColorSpace = THREE.SRGBColorSpace;
           renderer.toneMapping = THREE.NeutralToneMapping;
           renderer.toneMappingExposure = 1.08;
-          loadStoreModel();
+          // Sequence: load the store + hat first so the cowboy-hat
+          // template is populated, THEN load the train so it can clone
+          // a tinted hat onto each per-route train. Without this order
+          // the first train load would land before the template existed
+          // and the trains would render hat-less.
+          loadStoreModel()
+            .then(() => {
+              if (disposed) return;
+              return loadTrainModel();
+            })
+            .catch((err) => {
+              console.warn("Model load chain failed:", err);
+            });
         },
         render(_gl, args) {
           const projectionMatrix = getProjectionMatrix(args);
           if (!scene || !camera || !renderer || !projectionMatrix) {
             return;
           }
+
+          // Advance every route's train BEFORE drawing so all new poses
+          // are what get rasterized this frame. Routes without an active
+          // route short-circuit immediately and cost essentially nothing.
+          tickTrains();
 
           camera.projectionMatrix.fromArray(projectionMatrix);
           renderer.resetState();
@@ -892,6 +1880,25 @@ const stationCount = hebStoreData.length;
             scene?.remove(entry.stateMarkerGroup);
           });
           tileEntries.splice(0);
+          ROUTE_IDS.forEach((id) => {
+            const state = trains[id];
+            if (state.group) {
+              scene?.remove(state.group);
+            }
+            state.group = null;
+            state.modelRoot = null;
+            state.hatGroup = null;
+            state.segments = [];
+            state.stationDistances = [];
+            state.totalLengthMeters = 0;
+            state.progressMeters = 0;
+            state.direction = 1;
+            state.lastTickMs = 0;
+            state.pauseEndsAt = 0;
+            state.lastPausedStationIndex = -1;
+            state.routeActive = false;
+          });
+          normalizedHatTemplate = null;
           ownedGeometries.forEach((geometry) => geometry.dispose());
           ownedGeometries.clear();
           ownedMaterials.forEach((material) => material.dispose());
@@ -916,15 +1923,26 @@ const stationCount = hebStoreData.length;
               entry.storeModel.scale.setScalar(entry.baseModelScale);
             });
           }
-          applyVisibility(
+          const shouldAnimateStateReveal =
             mode === "state" &&
-              previousMode !== "state" &&
-              !hasPlayedStateMarkerReveal,
-          );
+            previousMode !== "state" &&
+            !hasPlayedStateMarkerReveal;
+          applyVisibility(shouldAnimateStateReveal);
+          // Belt-and-suspenders: if we're entering state mode WITHOUT the
+          // pop animation (e.g. coming back from regional), force every
+          // hat to its full resting scale right now. applyVisibility's
+          // else branch already does this, but re-doing it here guards
+          // against any future code path that might leave a hat at 0.001.
+          if (mode === "state" && !shouldAnimateStateReveal) {
+            tileEntries.forEach((entry) => {
+              entry.stateMarkerModel.scale.setScalar(entry.stateMarkerScale);
+            });
+          }
           mapInstance?.triggerRepaint();
         },
         setHoveredStore,
         pulseStore,
+        setRoute,
       };
     }
 
@@ -1067,10 +2085,23 @@ const stationCount = hebStoreData.length;
           opacity?: number;
           transparent?: boolean;
           toneMapped?: boolean;
+          depthWrite?: boolean;
+          depthTest?: boolean;
+          alphaTest?: number;
         };
 
+      // Full opacity hardening — same as the cowboy hat + train. Pinning
+      // depthWrite/depthTest/alphaTest stops any GLB-authored
+      // alpha-cutoff or transparency-pass behavior from making the
+      // building "flicker" or look semi-transparent against the map.
+      // Previously only transparent/opacity were set; if a store-mesh's
+      // texture carried an alpha channel the renderer would still
+      // discard pixels via alphaTest, producing the unsteady look.
       possibleTexturedMaterial.transparent = false;
       possibleTexturedMaterial.opacity = 1;
+      possibleTexturedMaterial.depthWrite = true;
+      possibleTexturedMaterial.depthTest = true;
+      possibleTexturedMaterial.alphaTest = 0;
       possibleTexturedMaterial.toneMapped = true;
 
       if (possibleTexturedMaterial.map) {
@@ -1114,8 +2145,30 @@ const stationCount = hebStoreData.length;
 
         ownedGeometries.add(mesh.geometry);
         getMeshMaterials(mesh).forEach((material) => {
-          material.needsUpdate = true;
-          material.side = THREE.FrontSide;
+          // Force the cowboy-hat materials to be FULLY OPAQUE and write to
+          // the depth buffer. Without this, any material the GLB authored
+          // with `alphaMode: BLEND` (or any texture with an alpha channel)
+          // would have left `transparent = true` after loading. Three.js
+          // renders transparent meshes in a separate, depth-sorted pass that
+          // can flicker / drop frames depending on camera angle and other
+          // transparent geometry on screen — which is exactly the "cowboy
+          // hat sometimes disappears" symptom seen on the state view.
+          // The store building's `preserveGlbMaterialColor` does the same
+          // opacity hardening for the same reason.
+          const m = material as THREE.MeshStandardMaterial & {
+            opacity?: number;
+            transparent?: boolean;
+            depthWrite?: boolean;
+            depthTest?: boolean;
+            alphaTest?: number;
+          };
+          m.needsUpdate = true;
+          m.side = THREE.FrontSide;
+          m.transparent = false;
+          m.opacity = 1;
+          m.depthWrite = true;
+          m.depthTest = true;
+          m.alphaTest = 0;
           ownedMaterials.add(material);
         });
         mesh.renderOrder = 16;
@@ -1148,9 +2201,11 @@ const stationCount = hebStoreData.length;
         0,
       );
       const meterScale = mercator.meterInMercatorCoordinateUnits();
-      const targetFootprintMeters = store.hub
+      const baseFootprintMeters = store.hub
         ? hubStoreFootprintMeters
         : regularStoreFootprintMeters;
+      const regionMultiplier = computeStoreFootprintMultiplier(store);
+      const targetFootprintMeters = baseFootprintMeters * regionMultiplier;
       const modelFootprint = Math.max(
         normalizedModel.size.x,
         normalizedModel.size.y,
@@ -1408,23 +2463,44 @@ const stationCount = hebStoreData.length;
       root.dataset.selectedStationId = String(stationId ?? "");
       root.dataset.selectedStationCity = String(station.city ?? "");
 
-      // State-view click: enter regional view. This dispatch happens BEFORE
-      // we append to the selection panel so the click that bridges state →
-      // regional also records the chosen station as the first traversal stop.
+      // All adds/removes target the ACTIVE route. The active route is
+      // the one whose accordion section is currently expanded, which is
+      // also visually highlighted with that route's color. Switching the
+      // active route happens via the accordion headers (see initRouteAccordion).
       if (viewState === "state-network" && !isTransitioning) {
         const regionId = station.regionId as string | undefined;
         if (regionId && regionId !== "statewide") {
           enterRegionalView(regionId, stationId);
         }
+        if (stationId) {
+          const selection = buildSelectionFromProperties(stationId, station);
+          addSelectedStation(activeRouteId, selection);
+          storeTileLayer?.pulseStore(stationId);
+        }
+        return;
       }
 
-      // Build a typed snapshot from the feature properties. We use feature
-      // properties (not a lookup into storeDefinitions) so the data path is
-      // a single source of truth — whatever was rendered IS what we record.
+      // Regional-view click: TOGGLE within the active route. If the
+      // station is already in THIS route, re-clicking removes it. A
+      // station already in another route can still be added to the
+      // active route — routes are independent.
       if (!stationId) {
         return;
       }
-      const selection: SelectedStation = {
+      storeTileLayer?.pulseStore(stationId);
+      if (isStationSelected(activeRouteId, stationId)) {
+        removeSelectedStation(activeRouteId, stationId);
+      } else {
+        const selection = buildSelectionFromProperties(stationId, station);
+        addSelectedStation(activeRouteId, selection);
+      }
+    }
+
+    function buildSelectionFromProperties(
+      stationId: string,
+      station: Record<string, unknown>,
+    ): SelectedStation {
+      return {
         id: stationId,
         name: String(station.name ?? `H-E-B ${station.city ?? ""}`),
         address: String(station.address ?? ""),
@@ -1433,32 +2509,155 @@ const stationCount = hebStoreData.length;
         regionId: String(station.regionId ?? ""),
         regionName: String(station.regionName ?? ""),
       };
-
-      addSelectedStation(selection);
-
-      // Reactive feedback on the 3D model itself: a quick scale pulse so the
-      // user can see WHICH building they just registered. No-op if the model
-      // isn't currently visible (e.g. click happened during the regional
-      // fly-in before the regional models were toggled on).
-      storeTileLayer?.pulseStore(stationId);
     }
 
-    function addSelectedStation(selection: SelectedStation) {
-      // Dedupe by id — a "traversal route" implies each station appears at
-      // most once. If the user re-clicks an already-selected building we do
-      // nothing (intentional; the panel is additive, not a counter).
-      if (selectedStations.some((entry) => entry.id === selection.id)) {
+    function addSelectedStation(routeId: RouteId, selection: SelectedStation) {
+      const stations = routeStations[routeId];
+      if (stations.some((entry) => entry.id === selection.id)) {
         return;
       }
-      selectedStations.push(selection);
-      renderSelectionListItem(selection);
+      stations.push(selection);
+      renderSelectionListItem(routeId, selection);
       updateSelectionMeta();
+      updateRailroadRoute(routeId);
+      // Auto-expand this route's section so the user immediately sees
+      // what they just selected. If it was already open we leave it
+      // open. Clicking the header still toggles it shut afterward.
+      setRouteOpen(routeId, true);
     }
 
-    function renderSelectionListItem(selection: SelectedStation) {
+    function removeSelectedStation(routeId: RouteId, stationId: string) {
+      const stations = routeStations[routeId];
+      const index = stations.findIndex((entry) => entry.id === stationId);
+      if (index === -1) {
+        return;
+      }
+      stations.splice(index, 1);
+      // Update the railroad immediately so this route's track + train
+      // respond to the removal in the same frame as the click; the
+      // list-item collapse animation below is a DOM-level effect only.
+      updateRailroadRoute(routeId);
+
+      const list = root.querySelector<HTMLOListElement>(
+        `[data-selection-list="${routeId}"]`,
+      );
+      const item = list?.querySelector<HTMLElement>(
+        `[data-selection-item="${cssEscape(stationId)}"]`,
+      );
+      if (!item) {
+        updateSelectionMeta();
+        return;
+      }
+
+      // Lock the current height so the collapse-out animation has a
+      // measurable starting point (the element's CSS resets height to auto
+      // after the entrance animation completes).
+      const currentHeight = item.offsetHeight;
+      item.style.height = `${currentHeight}px`;
+      item.style.overflow = "hidden";
+
+      if (reduceMotion) {
+        item.remove();
+        updateSelectionMeta();
+        return;
+      }
+
+      animate(item, {
+        height: [currentHeight, 0],
+        opacity: [1, 0],
+        duration: 280,
+        ease: "inCubic",
+        onComplete: () => {
+          item.remove();
+          updateSelectionMeta();
+        },
+      });
+    }
+
+    function isStationSelected(routeId: RouteId, stationId: string) {
+      return routeStations[routeId].some((entry) => entry.id === stationId);
+    }
+
+    // Older versions of Safari / WebKit lack CSS.escape, so we fall back to
+    // a minimal escape for the characters that can appear in our store ids
+    // (hyphens are fine in attribute selectors; only quote/backslash break).
+    function cssEscape(value: string) {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(value);
+      }
+      return value.replace(/(["\\])/g, "\\$1");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Route ETA — "if this were a real Shinkansen, how long would the
+    // traversal take?" Walks the polyline summing haversine distance,
+    // adds a minute per intermediate stop for boarding/alighting, and
+    // divides by an average Shinkansen cruise speed. Top-speed N700S
+    // hits 320 km/h; average over a route with stops lands ~250 km/h.
+    // ─────────────────────────────────────────────────────────────────
+    const SHINKANSEN_AVG_KMH = 250;
+    const STATION_STOP_MINUTES = 1;
+    const EARTH_RADIUS_KM = 6371.0088;
+
+    function haversineKm(
+      lng1: number,
+      lat1: number,
+      lng2: number,
+      lat2: number,
+    ) {
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const phi1 = toRad(lat1);
+      const phi2 = toRad(lat2);
+      const sinDLat = Math.sin(dLat / 2);
+      const sinDLng = Math.sin(dLng / 2);
+      const a =
+        sinDLat * sinDLat +
+        Math.cos(phi1) * Math.cos(phi2) * sinDLng * sinDLng;
+      return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
+    }
+
+    function formatRouteMinutes(totalMinutes: number) {
+      if (totalMinutes < 1) return "<1 min";
+      if (totalMinutes < 60) return `${Math.round(totalMinutes)} min`;
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = Math.round(totalMinutes % 60);
+      return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+    }
+
+    function estimateRouteEta(routeId: RouteId): string | null {
+      const stations = routeStations[routeId];
+      if (stations.length < 2) return null;
+      let totalKm = 0;
+      for (let i = 0; i < stations.length - 1; i += 1) {
+        const a = storeDefinitions.find((s) => s.id === stations[i].id);
+        const b = storeDefinitions.find((s) => s.id === stations[i + 1].id);
+        if (a && b) {
+          totalKm += haversineKm(a.lng, a.lat, b.lng, b.lat);
+        }
+      }
+      const travelMinutes = (totalKm / SHINKANSEN_AVG_KMH) * 60;
+      const stopMinutes =
+        Math.max(0, stations.length - 2) * STATION_STOP_MINUTES;
+      return formatRouteMinutes(travelMinutes + stopMinutes);
+    }
+
+    function renderSelectionListItem(
+      routeId: RouteId,
+      selection: SelectedStation,
+    ) {
+      const list = root.querySelector<HTMLOListElement>(
+        `[data-selection-list="${routeId}"]`,
+      );
+      if (!list) return;
+
       const item = document.createElement("li");
       item.className = "heb-landing__selection-item";
       item.dataset.selectionItem = selection.id;
+
+      const body = document.createElement("div");
+      body.className = "heb-landing__selection-item-body";
 
       const name = document.createElement("p");
       name.className = "heb-landing__selection-item-name";
@@ -1474,8 +2673,24 @@ const stationCount = hebStoreData.length;
       region.className = "heb-landing__selection-item-region";
       region.textContent = selection.regionName;
 
-      item.append(name, address, region);
-      selectionList.appendChild(item);
+      body.append(name, address, region);
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "heb-landing__selection-item-remove";
+      remove.setAttribute("aria-label", `Remove ${selection.name}`);
+      remove.dataset.removeId = selection.id;
+      const removeIcon = document.createElement("span");
+      removeIcon.setAttribute("aria-hidden", "true");
+      removeIcon.textContent = "×";
+      remove.appendChild(removeIcon);
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        removeSelectedStation(routeId, selection.id);
+      });
+
+      item.append(body, remove);
+      list.appendChild(item);
       animateSelectionItemIn(item);
     }
 
@@ -1523,15 +2738,109 @@ const stationCount = hebStoreData.length;
     }
 
     function updateSelectionMeta() {
-      const count = selectedStations.length;
-      selectionCount.textContent = `${count} ${count === 1 ? "station" : "stations"}`;
-      selectionEmpty.hidden = count > 0;
+      let total = 0;
+      ROUTE_IDS.forEach((id) => {
+        const count = routeStations[id].length;
+        total += count;
+        const countEl = root.querySelector<HTMLElement>(
+          `[data-route-count="${id}"]`,
+        );
+        if (countEl) {
+          countEl.textContent = String(count);
+        }
+        const empty = root.querySelector<HTMLElement>(
+          `[data-selection-empty="${id}"]`,
+        );
+        if (empty) {
+          empty.hidden = count > 0;
+        }
+        // Recompute the Shinkansen ETA for this route. Empty string
+        // when fewer than 2 stations are selected — the `:empty` CSS
+        // rule then hides the pill so it doesn't render as a stray
+        // dot in the header.
+        const etaEl = root.querySelector<HTMLElement>(
+          `[data-route-eta="${id}"]`,
+        );
+        if (etaEl) {
+          etaEl.textContent = estimateRouteEta(id) ?? "";
+        }
+      });
+      selectionCount.textContent = `${total} ${total === 1 ? "station" : "stations"}`;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // Per-route railroad updater.
+    //
+    // Called by every mutation point on routeStations[routeId]. Updates
+    // ONE route's MapLibre source + Three.js train (or all routes when
+    // called without an argument — used by `clearSelectedStations` and
+    // initial setup). Each route owns its own GeoJSON source + colored
+    // line layer; routes are independent and all visible at once.
+    // ────────────────────────────────────────────────────────────────
+    function updateRailroadRoute(routeId?: RouteId) {
+      if (!map) {
+        return;
+      }
+      const ids: RouteId[] = routeId ? [routeId] : ROUTE_IDS;
+      ids.forEach((id) => {
+        const sourceId = railroadSourceIdFor(id);
+        const source = map?.getSource(sourceId) as
+          | maplibregl.GeoJSONSource
+          | undefined;
+        const stations = routeStations[id];
+
+        if (stations.length < 2) {
+          source?.setData(createEmptyFeatureCollection() as never);
+          storeTileLayer?.setRoute(id, null);
+          return;
+        }
+
+        const coordinates: GeoJsonPosition[] = [];
+        stations.forEach((selected) => {
+          const def = storeDefinitions.find((store) => store.id === selected.id);
+          if (def) {
+            coordinates.push([def.lng, def.lat]);
+          }
+        });
+
+        if (coordinates.length < 2) {
+          source?.setData(createEmptyFeatureCollection() as never);
+          storeTileLayer?.setRoute(id, null);
+          return;
+        }
+
+        const lineFeature: MapFeatureCollection = {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              id: `active-railroad-${id}`,
+              properties: {
+                routeId: id,
+                stationCount: coordinates.length,
+              },
+              geometry: {
+                type: "LineString",
+                coordinates,
+              },
+            },
+          ],
+        };
+        source?.setData(lineFeature as never);
+        storeTileLayer?.setRoute(id, coordinates);
+      });
     }
 
     function clearSelectedStations() {
-      selectedStations.length = 0;
-      selectionList.replaceChildren();
+      ROUTE_IDS.forEach((id) => {
+        routeStations[id].length = 0;
+        const list = root.querySelector<HTMLOListElement>(
+          `[data-selection-list="${id}"]`,
+        );
+        list?.replaceChildren();
+      });
       updateSelectionMeta();
+      updateRailroadRoute();
     }
 
     function setSelectionPanelVisible(isVisible: boolean) {
@@ -2415,6 +3724,50 @@ const stationCount = hebStoreData.length;
 </script>
 
 <style>
+  /* ─── Volks-Typo design tokens ─────────────────────────────────────
+     Ported from jdrhyne/volks-typo (Bauhaus / Vienna-signage blog theme).
+     Monotone palette + accent red, Oswald + Roboto Condensed + Work
+     Sans + JetBrains Mono. Dark-theme tokens applied at root since the
+     interactive map sits behind everything and a white-paper palette
+     would clash. The accent red (#dc2626 / dark #ff3333) sits within
+     a couple of points of H-E-B's brand red, so the existing red on
+     the map polygons reads as the same accent system.
+     ───────────────────────────────────────────────────────────────── */
+  @import url("https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Roboto+Condensed:wght@400;500;600;700&family=Work+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+  :root {
+    /* Monotone palette */
+    --color-white: #ffffff;
+    --color-light-gray: #f5f5f5;
+    --color-medium-gray: #888888;
+    --color-dark-gray: #333333;
+    --color-black: #000000;
+
+    /* Accent */
+    --color-accent-red: #dc2626;
+
+    /* Semantic tokens — dark theme (this app's overlay is on a 3D map,
+       so the volks-typo dark theme tokens fit naturally). */
+    --color-background: #0a0a0a;
+    --color-surface: #1a1a1a;
+    --color-text-primary: #f5f5f5;
+    --color-text-secondary: #b8b8b8;
+    --color-text-muted: #888888;
+    --color-border: #333333;
+    --color-accent: #ff3333;
+
+    /* Typography stack */
+    --font-heading-primary: "Oswald", sans-serif;
+    --font-heading-secondary: "Roboto Condensed", sans-serif;
+    --font-body: "Work Sans", sans-serif;
+    --font-mono: "JetBrains Mono", monospace;
+
+    /* Grid */
+    --grid-unit: 8px;
+    --max-width: 1200px;
+    --content-padding: calc(var(--grid-unit) * 3);
+  }
+
   :global(html),
   :global(body) {
     min-height: 100%;
@@ -2423,6 +3776,7 @@ const stationCount = hebStoreData.length;
 
   :global(body) {
     overflow: hidden;
+    font-family: var(--font-body);
   }
 
   .heb-landing {
@@ -2431,7 +3785,7 @@ const stationCount = hebStoreData.length;
     height: 100vh;
     min-height: 620px;
     overflow: hidden;
-    color: #fff;
+    color: var(--color-text-primary);
     background:
       radial-gradient(
         circle at 50% 28%,
@@ -2440,14 +3794,7 @@ const stationCount = hebStoreData.length;
         transparent 60%
       ),
       linear-gradient(145deg, #d9dfe4 0%, #aeb8c2 52%, #87929d 100%);
-    font-family:
-      Inter,
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      BlinkMacSystemFont,
-      "Segoe UI",
-      sans-serif;
+    font-family: var(--font-body);
     isolation: isolate;
   }
 
@@ -2553,14 +3900,16 @@ const stationCount = hebStoreData.length;
     align-items: center;
     justify-content: center;
     min-height: 2.25rem;
-    padding: 0 0.85rem;
+    padding: 0 0.95rem;
     border-radius: 999px;
     color: rgba(255, 255, 255, 0.92);
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0;
+    font-family: var(--font-heading-secondary);
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
     line-height: 1;
     text-decoration: none;
+    text-transform: uppercase;
     text-shadow: 0 2px 14px rgba(35, 45, 56, 0.26);
     transition:
       background-color 160ms ease,
@@ -2617,27 +3966,32 @@ const stationCount = hebStoreData.length;
   .heb-landing__eyebrow {
     margin: 0 0 0.65rem;
     color: rgba(255, 255, 255, 0.82);
+    font-family: var(--font-heading-secondary);
     font-size: clamp(0.72rem, 1.3vw, 0.9rem);
-    font-weight: 800;
-    letter-spacing: 0;
+    font-weight: 600;
+    letter-spacing: 0.18em;
     text-transform: uppercase;
   }
 
   .heb-landing__copy h1 {
     margin: 0;
     color: #fff;
+    font-family: var(--font-heading-primary);
     font-size: clamp(3.3rem, 10vw, 8.8rem);
-    font-weight: 900;
-    letter-spacing: 0;
-    line-height: 0.9;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 0.95;
+    text-transform: uppercase;
   }
 
   .heb-landing__subtitle {
     margin: clamp(0.7rem, 2vw, 1.2rem) 0 0;
     color: rgba(255, 255, 255, 0.9);
+    font-family: var(--font-heading-secondary);
     font-size: clamp(1.05rem, 2.4vw, 1.65rem);
-    font-weight: 750;
-    letter-spacing: 0;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
   }
 
   .heb-landing__actions {
@@ -2670,15 +4024,17 @@ const stationCount = hebStoreData.length;
     justify-content: center;
     min-width: 10.5rem;
     min-height: 3.05rem;
-    padding: 0 1.35rem;
+    padding: 0 1.6rem;
     border: 1px solid rgba(255, 255, 255, 0.28);
     border-radius: 999px;
     color: #fff;
+    font-family: var(--font-heading-secondary);
     font-size: 0.78rem;
-    font-weight: 900;
-    letter-spacing: 0;
+    font-weight: 700;
+    letter-spacing: 0.16em;
     line-height: 1;
     text-decoration: none;
+    text-transform: uppercase;
     box-shadow:
       0 18px 36px rgba(42, 52, 63, 0.24),
       inset 0 1px 0 rgba(255, 255, 255, 0.24);
@@ -2696,7 +4052,8 @@ const stationCount = hebStoreData.length;
   }
 
   .heb-landing__button--primary {
-    background: rgba(225, 25, 33, 0.9);
+    background: var(--color-accent);
+    border-color: var(--color-accent);
   }
 
   .heb-landing__button--secondary {
@@ -2705,7 +4062,8 @@ const stationCount = hebStoreData.length;
 
   .heb-landing__button--primary:hover,
   .heb-landing__button--primary:focus-visible {
-    background: rgba(239, 40, 48, 0.96);
+    background: var(--color-accent-red);
+    border-color: var(--color-accent-red);
   }
 
   .heb-landing__button--secondary:hover,
@@ -2729,20 +4087,33 @@ const stationCount = hebStoreData.length;
     display: none;
   }
 
-  /* Selection panel — STRUCTURAL ONLY (positioning + scroll + animation
-     hooks). All visual styling (colors, fonts, sizing, shadows, etc.) is
-     intentionally left to the project stylesheet. */
+  /* ─────────────────────────────────────────────────────────────────
+     Selection panel — minimalist glass-card matching the existing HUD
+     language (translucent, subtle borders, white text, backdrop blur).
+     Designed to sit unobtrusively on the right edge during regional
+     view; scrolls internally when the traversal list grows.
+     ───────────────────────────────────────────────────────────────── */
   .heb-landing__selection-panel {
     position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
+    top: clamp(0.75rem, 2.5vh, 1.25rem);
+    right: clamp(0.65rem, 1.5vw, 1.1rem);
+    bottom: auto;
     z-index: 12;
     display: flex;
     flex-direction: column;
-    max-height: 100vh;
-    overflow-y: auto;
-    overflow-x: hidden;
+    width: min(86vw, 15.5rem);
+    max-height: calc(100vh - clamp(1.5rem, 5vh, 2.5rem));
+    padding: 0.65rem 0.7rem 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 0.9rem;
+    background: rgba(18, 22, 28, 0.42);
+    box-shadow:
+      0 16px 40px rgba(18, 24, 32, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    color: rgba(255, 255, 255, 0.92);
+    overflow: hidden;
     pointer-events: auto;
   }
 
@@ -2750,21 +4121,393 @@ const stationCount = hebStoreData.length;
     display: none;
   }
 
-  .heb-landing__selection-list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  .heb-landing__selection-panel-header {
+    flex: 0 0 auto;
+    padding-bottom: 0.4rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
 
-  /* Each list item starts collapsed; anime.js animates it to its natural
-     height + full opacity on insert. `will-change` keeps the animation
-     smooth without paint thrash. `overflow: hidden` is required so the
-     height interpolation actually clips during the expand. */
+  .heb-landing__selection-panel-kicker {
+    margin: 0 0 0.1rem;
+    color: var(--color-accent);
+    font-family: var(--font-heading-secondary);
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__selection-panel-title {
+    margin: 0 0 0.15rem;
+    color: #fff;
+    font-family: var(--font-heading-primary);
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1.15;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__selection-panel-count {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.55);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+
+  .heb-landing__selection-list {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 0 0.1rem 0.1rem;
+    list-style: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    counter-reset: heb-selection;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+
+  .heb-landing__selection-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .heb-landing__selection-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+  }
+
+  /* Each list item starts collapsed so anime.js can interpolate height
+     from 0 → its natural size on insert. `overflow: hidden` is required
+     for the height tween to actually clip. */
   .heb-landing__selection-item {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+    padding: 0.45rem 0.1rem 0.45rem 1.65rem;
+    counter-increment: heb-selection;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
     overflow: hidden;
     height: 0;
     opacity: 0;
+    transition: background-color 160ms ease;
     will-change: height, opacity;
+  }
+
+  .heb-landing__selection-item:last-child {
+    border-bottom: none;
+  }
+
+  .heb-landing__selection-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  /* Ordinal number — auto-managed by CSS counter so removals re-number
+     without us touching the DOM. Tinted to the parent route's color
+     (set on the route section as --route-color) so the ordinal reads
+     as part of the route badge. */
+  .heb-landing__selection-item::before {
+    position: absolute;
+    top: 0.55rem;
+    left: 0.1rem;
+    content: counter(heb-selection, decimal-leading-zero);
+    color: var(--route-color, rgba(225, 25, 33, 0.85));
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    filter: brightness(1.4);
+  }
+
+  .heb-landing__selection-item-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .heb-landing__selection-item-name {
+    margin: 0 0 0.1rem;
+    color: #fff;
+    font-family: var(--font-heading-secondary);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .heb-landing__selection-item-address {
+    margin: 0 0 0.12rem;
+    color: rgba(255, 255, 255, 0.72);
+    font-family: var(--font-body);
+    font-size: 0.62rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+
+  .heb-landing__selection-item-region {
+    margin: 0;
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.52rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__selection-item-remove {
+    flex: 0 0 auto;
+    width: 1.15rem;
+    height: 1.15rem;
+    padding: 0;
+    margin-top: 0.05rem;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .heb-landing__selection-item-remove:hover,
+  .heb-landing__selection-item-remove:focus-visible {
+    border-color: rgba(225, 25, 33, 0.6);
+    background: rgba(225, 25, 33, 0.18);
+    color: #fff;
+    outline: none;
+    transform: scale(1.06);
+  }
+
+  .heb-landing__selection-empty {
+    margin: 0;
+    padding: 0.35rem 0.1rem;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    line-height: 1.35;
+  }
+
+  .heb-landing__selection-empty[hidden] {
+    display: none;
+  }
+
+  /* ─── Route accordion ────────────────────────────────────────────
+     Six color-coded route sections, strict-accordion (one open at a
+     time). The active section's body expands; others stay collapsed.
+     `--route-color` is a per-section CSS variable set inline in JS
+     (initRouteAccordion) so every visual highlight derives from a
+     single source.
+     ─────────────────────────────────────────────────────────────── */
+  .heb-landing__route-accordion {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+    margin-top: 0.05rem;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 0.1rem;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  }
+
+  .heb-landing__route-accordion::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .heb-landing__route-accordion::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 999px;
+  }
+
+  .heb-landing__route-section {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border-radius: 0.7rem;
+    overflow: hidden;
+  }
+
+  /* Hamburger-button header: the whole pill is painted in the route's
+     color, with its text color set per-route (yellow gets dark text;
+     others get white). Hovering and pressing nudge the background
+     darker/lighter so the affordance feels tactile across all six
+     route colors without per-route hover rules. */
+  .heb-landing__route-header {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    border-radius: 0.55rem;
+    background: var(--route-color);
+    color: var(--route-text-color, #ffffff);
+    font: inherit;
+    font-family: var(--font-heading-primary);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-align: left;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.16),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    transition:
+      filter 160ms ease,
+      transform 160ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .heb-landing__route-label {
+    flex: 1 1 auto;
+    font-family: var(--font-heading-primary);
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  }
+
+  .heb-landing__route-header:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+  }
+
+  .heb-landing__route-header:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline-offset: 2px;
+  }
+
+  .heb-landing__route-header:active {
+    filter: brightness(0.94);
+    transform: translateY(0);
+  }
+
+  /* When a section is OPEN, square the header's bottom corners so it
+     visually fuses with the body underneath. Open and "active" are
+     independent — a route can be active while collapsed, or open while
+     inactive. */
+  .heb-landing__route-section[data-route-open="true"]
+    .heb-landing__route-header {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    box-shadow:
+      0 4px 16px rgba(0, 0, 0, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.18);
+  }
+
+  /* Active-route highlight (where new clicks land). Stays present even
+     when the section is collapsed — a soft outer ring in the route's
+     color so the user can tell at a glance which list their next click
+     will add to. */
+  .heb-landing__route-section[data-route-active="true"]
+    .heb-landing__route-header {
+    outline: 2px solid rgba(255, 255, 255, 0.55);
+    outline-offset: 1px;
+  }
+
+  /* Chevron icon — `▾`. Rotates 180° when its section is open so
+     closed/open states read at a glance. */
+  .heb-landing__route-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.05rem;
+    height: 1.05rem;
+    font-size: 0.7rem;
+    line-height: 1;
+    border-radius: 0.3rem;
+    background: rgba(0, 0, 0, 0.12);
+    transition:
+      transform 240ms ease,
+      background-color 160ms ease;
+  }
+
+  /* Shinkansen-ETA pill. Background + text colors are set inline per
+     route (see initRouteAccordion): pill background = the route's
+     `textColor`, pill text = the route's `lineColor`. The pill is
+     hidden when empty (fewer than 2 stations selected) so it doesn't
+     show a stray dot in the header. */
+  .heb-landing__route-eta {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.42rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.56rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  }
+
+  .heb-landing__route-eta:empty {
+    display: none;
+  }
+
+  .heb-landing__route-header:hover .heb-landing__route-icon {
+    background: rgba(0, 0, 0, 0.18);
+  }
+
+  .heb-landing__route-section[data-route-open="true"]
+    .heb-landing__route-icon {
+    transform: rotate(180deg);
+    background: rgba(0, 0, 0, 0.22);
+  }
+
+  /* CSS-only accordion expansion. When the section is inactive the
+     body collapses to zero height; when active it fades + grows into
+     a small panel that visually fuses with the bottom of the colored
+     hamburger header. */
+  .heb-landing__route-body {
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: none;
+    border-bottom-left-radius: 0.55rem;
+    border-bottom-right-radius: 0.55rem;
+    padding: 0.25rem 0.5rem 0.4rem;
+  }
+
+  /* The selection list inside each route body shares the existing
+     `.heb-landing__selection-list` styles, but the CSS counter must
+     reset per route so each route's ordinals start at 01. */
+  .heb-landing__route-body .heb-landing__selection-list {
+    counter-reset: heb-selection;
+  }
+
+  @media (max-width: 720px) {
+    .heb-landing__selection-panel {
+      top: auto;
+      right: 0.65rem;
+      bottom: max(0.65rem, env(safe-area-inset-bottom));
+      width: calc(100vw - 1.3rem);
+      max-height: 42vh;
+    }
   }
 
   .heb-landing__region-title {
@@ -2781,20 +4524,23 @@ const stationCount = hebStoreData.length;
 
   .heb-landing__region-kicker {
     margin: 0 0 0.45rem;
-    color: rgba(255, 255, 255, 0.72);
+    color: var(--color-accent);
+    font-family: var(--font-heading-secondary);
     font-size: 0.72rem;
-    font-weight: 900;
-    letter-spacing: 0;
+    font-weight: 600;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
   }
 
   .heb-landing__region-hud h2 {
     margin: 0;
     color: #fff;
-    font-size: clamp(0.9rem, 1.6vw, 1.35rem);
-    font-weight: 950;
-    letter-spacing: 0;
-    line-height: 1;
+    font-family: var(--font-heading-primary);
+    font-size: clamp(0.9rem, 1.6vw, 1.4rem);
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1.05;
+    text-transform: uppercase;
   }
 
   .heb-landing__region-return {
@@ -2805,7 +4551,7 @@ const stationCount = hebStoreData.length;
     align-items: center;
     justify-content: center;
     min-height: 2.7rem;
-    padding: 0 1.15rem;
+    padding: 0 1.35rem;
     border: 1px solid rgba(255, 255, 255, 0.32);
     border-radius: 999px;
     color: #fff;
@@ -2814,9 +4560,10 @@ const stationCount = hebStoreData.length;
       0 18px 34px rgba(24, 32, 42, 0.22),
       inset 0 1px 0 rgba(255, 255, 255, 0.18);
     font: inherit;
+    font-family: var(--font-heading-secondary);
     font-size: 0.76rem;
-    font-weight: 900;
-    letter-spacing: 0;
+    font-weight: 700;
+    letter-spacing: 0.18em;
     line-height: 1;
     text-transform: uppercase;
     backdrop-filter: blur(16px);
@@ -2832,7 +4579,8 @@ const stationCount = hebStoreData.length;
 
   .heb-landing__region-return:hover,
   .heb-landing__region-return:focus-visible {
-    background: rgba(225, 25, 33, 0.82);
+    background: var(--color-accent);
+    border-color: var(--color-accent);
     transform: translateX(-50%) translateY(-2px);
   }
 
