@@ -20,9 +20,9 @@ const stationCount = hebStoreData.length;
 
   <div class="heb-landing__hud" data-ui-hud>
     <nav class="heb-landing__nav" aria-label="Primary">
-      <a href="#home">Home</a>
-      <a href="#regions">Regions</a>
-      <a href="#cities">Cities</a>
+      <a href="#home" data-nav-home>Home</a>
+      <a href="#regions" data-regions-trigger>Regions</a>
+      <a href="#cities" data-cities-trigger>Cities</a>
       <a href="#about">About</a>
     </nav>
 
@@ -34,19 +34,23 @@ const stationCount = hebStoreData.length;
         tabindex="0"
         aria-label={`Reveal statewide H-E-B station network with ${stationCount} Texas stations`}
       >
-        <p class="heb-landing__eyebrow">Texas State Guide</p>
-        <h1 id="heb-shinkansen-title">HEB Shinkansen</h1>
+        <p class="heb-landing__eyebrow">Texas H-E-B Guide</p>
+        <h1 id="heb-shinkansen-title">HEB</h1>
+        <h2 id="heb-shinkansen-title">High Speed Rail</h2>
         <p class="heb-landing__subtitle">Choose your Stations</p>
       </div>
     </div>
 
     <div class="heb-landing__actions" aria-label="Map actions">
-      <a class="heb-landing__button heb-landing__button--primary" href="#start"
-        >GET STARTED</a
+      <a
+        class="heb-landing__button heb-landing__button--primary"
+        href="#start"
+        data-getstarted-trigger>GET STARTED</a
       >
       <a
         class="heb-landing__button heb-landing__button--secondary"
-        href="#details">SEE DETAILS</a
+        href="#details"
+        data-details-trigger>SEE DETAILS</a
       >
     </div>
 
@@ -74,8 +78,10 @@ const stationCount = hebStoreData.length;
         <p
           class="heb-landing__selection-panel-count"
           data-selection-count
-          aria-live="polite">0 stations</p
+          aria-live="polite"
         >
+          0 stations
+        </p>
       </header>
       <div
         class="heb-landing__route-accordion"
@@ -84,6 +90,386 @@ const stationCount = hebStoreData.length;
       >
       </div>
     </aside>
+
+    <div
+      class="heb-landing__modal"
+      data-details-modal
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="details-modal-title"
+      hidden
+    >
+      <button
+        type="button"
+        class="heb-landing__modal-backdrop"
+        data-details-close
+        aria-label="Close details"></button>
+      <div class="heb-landing__modal-card" role="document">
+        <button
+          type="button"
+          class="heb-landing__modal-close"
+          data-details-close
+          aria-label="Close"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <p class="heb-landing__modal-kicker">Texas H-E-B Guide</p>
+        <h2 id="details-modal-title" class="heb-landing__modal-title">
+          About this project
+        </h2>
+        <div class="heb-landing__modal-body">
+          <p>
+            Hello, you&rsquo;re here because you&rsquo;re curious about how many
+            H-E-Bs there are in Texas, and what would happen if
+            H&#8209;E&#8209;B had a high-speed railroad station at every one of
+            them. A Current train ride from Austin to San Antonio is 3 hrs
+            long...Imagine the travel time on a H-E-B high speed rail.
+          </p>
+          <p>
+            If you&rsquo;re a Texan, you know there&rsquo;s no public
+            transportation that exists at this scale&#8230; yet&#8230; hopefully
+            in a near future it will, and H-E-B becomes the food provider for
+            the next great <em>Train Lunch</em> served on the high-speed rail that
+            will happen.
+          </p>
+          <p>
+            Thank you for visiting. I&rsquo;m a software developer and 3D artist
+            based in Texas. I love the state, the culture, the people, and most
+            of all, H&#8209;E&#8209;B. Thank you, Texas, for being such an
+            amazing home.
+          </p>
+          <p class="heb-landing__modal-postscript">
+            <strong>P.S.</strong> If you&rsquo;re looking hire someone for marketing/animations,
+            reach out.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="heb-landing__modal"
+      data-cities-modal
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cities-modal-title"
+      hidden
+    >
+      <button
+        type="button"
+        class="heb-landing__modal-backdrop"
+        data-cities-close
+        aria-label="Close cities"></button>
+      <div class="heb-landing__modal-card" role="document">
+        <button
+          type="button"
+          class="heb-landing__modal-close"
+          data-cities-close
+          aria-label="Close"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <p class="heb-landing__modal-kicker">Texas H-E-B Guide</p>
+        <h2 id="cities-modal-title" class="heb-landing__modal-title">
+          Cities by Population
+        </h2>
+        <p class="heb-landing__cities-subtitle">
+          Texas cities ranked by population; only those with H&#8209;E&#8209;B
+          locations are shown.
+        </p>
+        <ol class="heb-landing__cities-list" data-cities-list></ol>
+      </div>
+    </div>
+
+    <div
+      class="heb-landing__modal"
+      data-getstarted-modal
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="getstarted-modal-title"
+      hidden
+    >
+      <button
+        type="button"
+        class="heb-landing__modal-backdrop"
+        data-getstarted-close
+        aria-label="Close get started"></button>
+      <div class="heb-landing__modal-card" role="document">
+        <button
+          type="button"
+          class="heb-landing__modal-close"
+          data-getstarted-close
+          aria-label="Close"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <p class="heb-landing__modal-kicker">How to navigate</p>
+        <h2 id="getstarted-modal-title" class="heb-landing__modal-title">
+          Get Started
+        </h2>
+        <p class="heb-landing__getstarted-intro">
+          Click a region to display its stores. Select between 6 routes to see
+          what it would be like if H&#8209;E&#8209;B had a high-speed rail line
+          connecting them.
+        </p>
+        <ul class="heb-landing__getstarted-controls">
+          <li class="heb-landing__getstarted-control">
+            <span class="heb-landing__getstarted-icon" aria-hidden="true">
+              <svg viewBox="0 0 32 48" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M2 16 A14 14 0 0 1 16 2 L16 20 L2 20 Z"
+                  fill="currentColor"
+                  class="heb-landing__getstarted-icon-accent"></path>
+                <rect
+                  x="2"
+                  y="2"
+                  width="28"
+                  height="44"
+                  rx="14"
+                  ry="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"></rect>
+                <line
+                  x1="16"
+                  y1="2"
+                  x2="16"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <line
+                  x1="2"
+                  y1="20"
+                  x2="30"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <rect
+                  x="14"
+                  y="8"
+                  width="4"
+                  height="8"
+                  rx="2"
+                  fill="currentColor"></rect>
+              </svg>
+            </span>
+            <div class="heb-landing__getstarted-text">
+              <span class="heb-landing__getstarted-label">Left click</span>
+              <span class="heb-landing__getstarted-desc">Select</span>
+            </div>
+          </li>
+          <li class="heb-landing__getstarted-control">
+            <span class="heb-landing__getstarted-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M2 16 A14 14 0 0 1 16 2 L16 20 L2 20 Z"
+                  fill="currentColor"
+                  class="heb-landing__getstarted-icon-accent"></path>
+                <rect
+                  x="2"
+                  y="2"
+                  width="28"
+                  height="44"
+                  rx="14"
+                  ry="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"></rect>
+                <line
+                  x1="16"
+                  y1="2"
+                  x2="16"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <line
+                  x1="2"
+                  y1="20"
+                  x2="30"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <rect
+                  x="14"
+                  y="8"
+                  width="4"
+                  height="8"
+                  rx="2"
+                  fill="currentColor"></rect>
+                <path
+                  d="M36 22 L44 22 M40 18 L44 22 L40 26"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path>
+                <path
+                  d="M44 32 L36 32 M40 28 L36 32 L40 36"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"></path>
+              </svg>
+            </span>
+            <div class="heb-landing__getstarted-text">
+              <span class="heb-landing__getstarted-label"
+                >Left click (hold)</span
+              >
+              <span class="heb-landing__getstarted-desc">Pan the map</span>
+            </div>
+          </li>
+          <li class="heb-landing__getstarted-control">
+            <span class="heb-landing__getstarted-icon" aria-hidden="true">
+              <svg viewBox="0 0 32 48" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M16 2 A14 14 0 0 1 30 16 L30 20 L16 20 Z"
+                  fill="currentColor"
+                  class="heb-landing__getstarted-icon-accent"></path>
+                <rect
+                  x="2"
+                  y="2"
+                  width="28"
+                  height="44"
+                  rx="14"
+                  ry="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"></rect>
+                <line
+                  x1="16"
+                  y1="2"
+                  x2="16"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <line
+                  x1="2"
+                  y1="20"
+                  x2="30"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <rect
+                  x="14"
+                  y="8"
+                  width="4"
+                  height="8"
+                  rx="2"
+                  fill="currentColor"></rect>
+              </svg>
+            </span>
+            <div class="heb-landing__getstarted-text">
+              <span class="heb-landing__getstarted-label">Right click</span>
+              <span class="heb-landing__getstarted-desc"
+                >Rotate &amp; tilt the camera</span
+              >
+            </div>
+          </li>
+          <li class="heb-landing__getstarted-control">
+            <span class="heb-landing__getstarted-icon" aria-hidden="true">
+              <svg viewBox="0 0 32 48" xmlns="http://www.w3.org/2000/svg">
+                <rect
+                  x="2"
+                  y="2"
+                  width="28"
+                  height="44"
+                  rx="14"
+                  ry="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"></rect>
+                <line
+                  x1="16"
+                  y1="2"
+                  x2="16"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <line
+                  x1="2"
+                  y1="20"
+                  x2="30"
+                  y2="20"
+                  stroke="currentColor"
+                  stroke-width="1.2"></line>
+                <rect
+                  x="13"
+                  y="6"
+                  width="6"
+                  height="12"
+                  rx="3"
+                  class="heb-landing__getstarted-icon-accent"
+                  fill="currentColor"></rect>
+                <path
+                  d="M16 1 L13 4 M16 1 L19 4"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  fill="none"
+                  stroke-linecap="round"></path>
+                <path
+                  d="M16 23 L13 20 M16 23 L19 20"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  fill="none"
+                  stroke-linecap="round"></path>
+              </svg>
+            </span>
+            <div class="heb-landing__getstarted-text">
+              <span class="heb-landing__getstarted-label">Mouse wheel</span>
+              <span class="heb-landing__getstarted-desc"
+                >Zoom in / zoom out</span
+              >
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div
+      class="heb-landing__modal"
+      data-regions-modal
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="regions-modal-title"
+      hidden
+    >
+      <button
+        type="button"
+        class="heb-landing__modal-backdrop"
+        data-regions-close
+        aria-label="Close regions"></button>
+      <div class="heb-landing__modal-card" role="document">
+        <button
+          type="button"
+          class="heb-landing__modal-close"
+          data-regions-close
+          aria-label="Close"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <p class="heb-landing__modal-kicker">Texas H-E-B Guide</p>
+        <h2 id="regions-modal-title" class="heb-landing__modal-title">
+          Regions
+        </h2>
+        <div class="heb-landing__regions-tree" data-regions-tree></div>
+      </div>
+    </div>
+
+    <div
+      class="heb-landing__station-tooltip"
+      data-station-tooltip
+      role="tooltip"
+      aria-hidden="true"
+      hidden
+    >
+      <p class="heb-landing__station-tooltip-name" data-station-tooltip-name>
+      </p>
+      <p
+        class="heb-landing__station-tooltip-address"
+        data-station-tooltip-address
+      >
+      </p>
+    </div>
   </div>
 </section>
 
@@ -118,6 +504,15 @@ const stationCount = hebStoreData.length;
   );
   const selectionCount = root?.querySelector<HTMLElement>(
     "[data-selection-count]",
+  );
+  const stationTooltip = root?.querySelector<HTMLElement>(
+    "[data-station-tooltip]",
+  );
+  const stationTooltipName = stationTooltip?.querySelector<HTMLElement>(
+    "[data-station-tooltip-name]",
+  );
+  const stationTooltipAddress = stationTooltip?.querySelector<HTMLElement>(
+    "[data-station-tooltip-address]",
   );
 
   if (
@@ -171,13 +566,7 @@ const stationCount = hebStoreData.length;
     };
     type ViewState = "landing" | "state-network" | "regional";
     type StationMode = "hidden" | "state" | "regional";
-    type RouteId =
-      | "black"
-      | "blue"
-      | "yellow"
-      | "pink"
-      | "purple"
-      | "orange";
+    type RouteId = "black" | "blue" | "yellow" | "pink" | "purple" | "orange";
     type StoreTileEntry = {
       storeId: string;
       modelGroup: THREE.Group;
@@ -406,12 +795,7 @@ const stationCount = hebStoreData.length;
     const nearestNeighborKmByStoreId = (() => {
       const EARTH_KM = 6371.0088;
       const toRad = (d: number) => (d * Math.PI) / 180;
-      const dist = (
-        lng1: number,
-        lat1: number,
-        lng2: number,
-        lat2: number,
-      ) => {
+      const dist = (lng1: number, lat1: number, lng2: number, lat2: number) => {
         const dLat = toRad(lat2 - lat1);
         const dLng = toRad(lng2 - lng1);
         const phi1 = toRad(lat1);
@@ -444,8 +828,7 @@ const stationCount = hebStoreData.length;
       if (!RESIZED_REGIONS.has(store.regionId)) return 1;
       const explicit = STORE_MULTIPLIER_OVERRIDES[store.city];
       if (explicit !== undefined) return explicit;
-      const minDistKm =
-        nearestNeighborKmByStoreId.get(store.id) ?? Infinity;
+      const minDistKm = nearestNeighborKmByStoreId.get(store.id) ?? Infinity;
       // Bucketed scale. The two tightest buckets exist mainly for the
       // Houston / Gulf Coast cluster, where stores routinely sit
       // 2-4 km apart — bumping those to the 2.0× bucket would push
@@ -567,11 +950,536 @@ const stationCount = hebStoreData.length;
     let hoveredStationId: string | null = null;
 
     initRouteAccordion();
+    initDetailsModal();
+    initRegionsModal();
+    initGetStartedModal();
+    initCitiesModal();
     map = createMap();
     introCopy.addEventListener("click", revealStateNetwork);
     introCopy.addEventListener("keydown", handleIntroKeydown);
     regionReturn.addEventListener("click", returnToStateView);
+    // Home link in the top nav resets back to the landing screen
+    // (animates camera to Texas state view, hides the region HUD,
+    // clears all selected routes, brings back the intro copy).
+    root
+      .querySelectorAll<HTMLAnchorElement>("[data-nav-home]")
+      .forEach((link) => {
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          if (isTransitioning) return;
+          showLanding(true);
+        });
+      });
     document.addEventListener("astro:before-swap", disposeMap, { once: true });
+
+    // Details modal — opens on "SEE DETAILS" button, closes via the X
+    // button, backdrop click, or Escape key. Lives in the landing
+    // section's HUD so it pulls focus only when explicitly opened.
+    function initDetailsModal() {
+      const modal = root.querySelector<HTMLElement>("[data-details-modal]");
+      if (!modal) return;
+
+      const open = (event?: Event) => {
+        event?.preventDefault();
+        modal.hidden = false;
+        // Defer the open-state class one frame so the CSS transition
+        // catches the change (going from `hidden` → visible in the
+        // same frame skips the enter animation).
+        requestAnimationFrame(() => {
+          modal.dataset.modalOpen = "true";
+        });
+      };
+
+      const close = () => {
+        modal.dataset.modalOpen = "false";
+        // Match the CSS transition duration before pulling the element
+        // out of the layout, so the exit animation can play.
+        window.setTimeout(() => {
+          if (modal.dataset.modalOpen === "false") {
+            modal.hidden = true;
+          }
+        }, 220);
+      };
+
+      root
+        .querySelectorAll<HTMLElement>("[data-details-trigger]")
+        .forEach((trigger) => {
+          trigger.addEventListener("click", open);
+        });
+      modal
+        .querySelectorAll<HTMLElement>("[data-details-close]")
+        .forEach((closer) => {
+          closer.addEventListener("click", close);
+        });
+      // Esc to close, but only when modal is actually open — keeps
+      // the listener cheap and avoids fighting any future keyboard
+      // shortcuts elsewhere on the page.
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (modal.dataset.modalOpen !== "true") return;
+        close();
+      });
+    }
+
+    // Cities modal — ranked Texas-city population list with an
+    // animated counter + progress bar per city, plus medal cowboy
+    // hats on the top 3. Cities list comes from storeDefinitions
+    // joined with TEXAS_CITY_POPULATIONS; cities without a population
+    // entry simply don't appear (keeps small towns from cluttering
+    // the modal). Counters re-animate every time the modal opens.
+    function initCitiesModal() {
+      const modal = root.querySelector<HTMLElement>("[data-cities-modal]");
+      const list = root.querySelector<HTMLElement>("[data-cities-list]");
+      if (!modal || !list) return;
+
+      // Rough 2023-era population estimates for every HEB-host city
+      // big enough to be worth ranking. Doesn't have to be perfect —
+      // this is for visual fun. City keys match the exact spelling
+      // used in hebGeoData.ts (so "Mckinney" not "McKinney").
+      const TEXAS_CITY_POPULATIONS: Record<string, number> = {
+        Houston: 2304580,
+        "San Antonio": 1495295,
+        Austin: 961855,
+        "Fort Worth": 956709,
+        "Corpus Christi": 317773,
+        Plano: 285494,
+        Lubbock: 263930,
+        Laredo: 256529,
+        Frisco: 219587,
+        Mckinney: 207654,
+        Cypress: 192000,
+        Brownsville: 186738,
+        Pasadena: 145860,
+        Mcallen: 143920,
+        Waco: 138486,
+        "Round Rock": 133372,
+        Midland: 132524,
+        Pearland: 125817,
+        Abilene: 125182,
+        "College Station": 120019,
+        "The Woodlands": 116278,
+        Odessa: 114428,
+        "League City": 114396,
+        Beaumont: 111256,
+        "Sugar Land": 111026,
+        Allen: 105623,
+        "New Braunfels": 102000,
+        "San Angelo": 99893,
+        Conroe: 98081,
+        Baytown: 84000,
+        Mansfield: 76247,
+        Georgetown: 75420,
+        "Missouri City": 75000,
+        "San Marcos": 67553,
+        Pflugerville: 65191,
+        Kingwood: 65000,
+        Spring: 62176,
+        "Port Arthur": 53000,
+        Burleson: 53000,
+        "Texas City": 51898,
+        Rockwall: 49000,
+        Waxahachie: 43000,
+        Friendswood: 41213,
+        Cleburne: 32000,
+        "Del Rio": 33867,
+        "Deer Park": 33470,
+        Lufkin: 35000,
+        Prosper: 38000,
+        Forney: 30000,
+      };
+
+      // Unique cities present in our store dataset, joined with the
+      // population table. Sorted descending; cities missing a
+      // population entry are dropped so the modal stays clean.
+      const seen = new Set<string>();
+      const cities = storeDefinitions
+        .filter((store) => {
+          if (seen.has(store.city)) return false;
+          seen.add(store.city);
+          return true;
+        })
+        .filter((store) => TEXAS_CITY_POPULATIONS[store.city] !== undefined)
+        .map((store) => ({
+          name: store.city,
+          population: TEXAS_CITY_POPULATIONS[store.city],
+          storeCount: storeDefinitions.filter((s) => s.city === store.city)
+            .length,
+        }))
+        .sort((a, b) => b.population - a.population);
+
+      const maxPopulation = cities[0]?.population ?? 1;
+
+      // Build the list once at init. Population numbers start at 0 in
+      // the DOM and animate to their final value each time the modal
+      // is opened.
+      cities.forEach((city, index) => {
+        const rank = index + 1;
+        const item = document.createElement("li");
+        item.className = "heb-landing__cities-item";
+        item.dataset.population = String(city.population);
+        item.dataset.maxPopulation = String(maxPopulation);
+        item.style.display = "block";
+
+        const body = document.createElement("div");
+        body.className = "heb-landing__cities-body";
+        body.style.display = "flex";
+        body.style.flexDirection = "column";
+        body.style.gap = "0.3rem";
+
+        const header = document.createElement("div");
+        header.className = "heb-landing__cities-header";
+        // Inline flex with three slots: rank, city name (fills the
+        // middle), and population count. Rank sits flush LEFT next to
+        // the city name on the same line, count is pushed to the
+        // right end. The bar and meta below align with the city name
+        // because the rank's fixed width keeps the column aligned.
+        header.style.display = "flex";
+        header.style.alignItems = "baseline";
+        header.style.gap = "0.6rem";
+
+        const rankCell = document.createElement("span");
+        rankCell.className = "heb-landing__cities-rank";
+        rankCell.textContent = String(rank).padStart(2, "0");
+        rankCell.style.flex = "0 0 auto";
+        rankCell.style.minWidth = "1.6rem";
+
+        const name = document.createElement("span");
+        name.className = "heb-landing__cities-name";
+        name.textContent = city.name;
+        name.style.flex = "1 1 auto";
+        name.style.minWidth = "0";
+
+        const count = document.createElement("span");
+        count.className = "heb-landing__cities-count";
+        count.dataset.cityCount = "true";
+        count.textContent = "0";
+        count.style.flex = "0 0 auto";
+
+        header.append(rankCell, name, count);
+
+        const barTrack = document.createElement("div");
+        barTrack.className = "heb-landing__cities-bar-track";
+
+        const bar = document.createElement("div");
+        bar.className = "heb-landing__cities-bar";
+        bar.dataset.cityBar = "true";
+        bar.style.width = "0%";
+
+        barTrack.appendChild(bar);
+
+        const meta = document.createElement("span");
+        meta.className = "heb-landing__cities-meta";
+        meta.textContent = `${city.storeCount} H-E-B ${city.storeCount === 1 ? "location" : "locations"}`;
+
+        body.append(header, barTrack, meta);
+
+        item.append(body);
+        list.appendChild(item);
+      });
+
+      const animateCounters = () => {
+        const items = list.querySelectorAll<HTMLElement>(
+          ".heb-landing__cities-item",
+        );
+        items.forEach((item, index) => {
+          const target = Number(item.dataset.population ?? "0");
+          const max = Number(item.dataset.maxPopulation ?? "1");
+          const countEl = item.querySelector<HTMLElement>("[data-city-count]");
+          const barEl = item.querySelector<HTMLElement>("[data-city-bar]");
+          if (!countEl || !barEl) return;
+          // Reset before animating in case the modal was opened
+          // previously and the counter is showing the final value.
+          countEl.textContent = "0";
+          barEl.style.width = "0%";
+
+          if (reduceMotion) {
+            countEl.textContent = target.toLocaleString();
+            barEl.style.width = `${(target / max) * 100}%`;
+            return;
+          }
+
+          // Stagger so the numbers don't all spin at once — they
+          // count up one row at a time, ~70ms apart. Top city
+          // ticks up first, smaller cities follow.
+          const proxy = { value: 0 };
+          animate(proxy, {
+            value: target,
+            duration: 1400,
+            delay: index * 70,
+            ease: "outExpo",
+            onUpdate: () => {
+              countEl.textContent = Math.round(proxy.value).toLocaleString();
+            },
+            onComplete: () => {
+              countEl.textContent = target.toLocaleString();
+            },
+          });
+          animate(barEl, {
+            width: [`0%`, `${(target / max) * 100}%`],
+            duration: 1400,
+            delay: index * 70,
+            ease: "outExpo",
+          });
+        });
+      };
+
+      const open = (event?: Event) => {
+        event?.preventDefault();
+        modal.hidden = false;
+        requestAnimationFrame(() => {
+          modal.dataset.modalOpen = "true";
+          animateCounters();
+        });
+      };
+
+      const close = () => {
+        modal.dataset.modalOpen = "false";
+        window.setTimeout(() => {
+          if (modal.dataset.modalOpen === "false") {
+            modal.hidden = true;
+          }
+        }, 220);
+      };
+
+      root
+        .querySelectorAll<HTMLElement>("[data-cities-trigger]")
+        .forEach((trigger) => {
+          trigger.addEventListener("click", open);
+        });
+      modal
+        .querySelectorAll<HTMLElement>("[data-cities-close]")
+        .forEach((closer) => {
+          closer.addEventListener("click", close);
+        });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (modal.dataset.modalOpen !== "true") return;
+        close();
+      });
+    }
+
+    // Get Started modal — quick tutorial with mouse-control diagrams.
+    function initGetStartedModal() {
+      const modal = root.querySelector<HTMLElement>("[data-getstarted-modal]");
+      if (!modal) return;
+
+      const open = (event?: Event) => {
+        event?.preventDefault();
+        modal.hidden = false;
+        requestAnimationFrame(() => {
+          modal.dataset.modalOpen = "true";
+        });
+      };
+
+      const close = () => {
+        modal.dataset.modalOpen = "false";
+        window.setTimeout(() => {
+          if (modal.dataset.modalOpen === "false") {
+            modal.hidden = true;
+          }
+        }, 220);
+      };
+
+      root
+        .querySelectorAll<HTMLElement>("[data-getstarted-trigger]")
+        .forEach((trigger) => {
+          trigger.addEventListener("click", open);
+        });
+      modal
+        .querySelectorAll<HTMLElement>("[data-getstarted-close]")
+        .forEach((closer) => {
+          closer.addEventListener("click", close);
+        });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (modal.dataset.modalOpen !== "true") return;
+        close();
+      });
+    }
+
+    // Regions modal — nested region → city → store dropdown. Each
+    // store row has a "View on map" button that closes the modal and
+    // flies into the regional view for that store. The tree is
+    // generated dynamically from storeDefinitions so adding/removing
+    // stores in the data file automatically updates the list.
+    function initRegionsModal() {
+      const modal = root.querySelector<HTMLElement>("[data-regions-modal]");
+      const tree = root.querySelector<HTMLElement>("[data-regions-tree]");
+      if (!modal || !tree) return;
+
+      const open = (event?: Event) => {
+        event?.preventDefault();
+        modal.hidden = false;
+        requestAnimationFrame(() => {
+          modal.dataset.modalOpen = "true";
+        });
+      };
+
+      const close = () => {
+        modal.dataset.modalOpen = "false";
+        window.setTimeout(() => {
+          if (modal.dataset.modalOpen === "false") {
+            modal.hidden = true;
+          }
+        }, 220);
+      };
+
+      populateRegionsTree(tree, close);
+
+      root
+        .querySelectorAll<HTMLElement>("[data-regions-trigger]")
+        .forEach((trigger) => {
+          trigger.addEventListener("click", open);
+        });
+      modal
+        .querySelectorAll<HTMLElement>("[data-regions-close]")
+        .forEach((closer) => {
+          closer.addEventListener("click", close);
+        });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (modal.dataset.modalOpen !== "true") return;
+        close();
+      });
+    }
+
+    function populateRegionsTree(
+      container: HTMLElement,
+      closeModal: () => void,
+    ) {
+      // Display order picked by the user; Panhandle isn't included
+      // because no stores currently fall in that region.
+      const REGION_DISPLAY_ORDER: { id: string; label: string }[] = [
+        { id: "north", label: "North Texas" },
+        { id: "west", label: "West Texas" },
+        { id: "south", label: "South Texas" },
+        { id: "central", label: "Central Texas" },
+        { id: "gulf", label: "Gulf Coast" },
+        { id: "east", label: "East Texas" },
+      ];
+
+      // Group: region → city → stores. Cities are sorted alphabetically
+      // within each region.
+      const grouped = new Map<
+        string,
+        Map<string, (typeof storeDefinitions)[number][]>
+      >();
+      storeDefinitions.forEach((store) => {
+        if (!grouped.has(store.regionId)) {
+          grouped.set(store.regionId, new Map());
+        }
+        const cityMap = grouped.get(store.regionId);
+        if (!cityMap) return;
+        if (!cityMap.has(store.city)) {
+          cityMap.set(store.city, []);
+        }
+        cityMap.get(store.city)?.push(store);
+      });
+
+      REGION_DISPLAY_ORDER.forEach(({ id, label }) => {
+        const cityMap = grouped.get(id);
+        if (!cityMap || cityMap.size === 0) return;
+
+        const regionEl = document.createElement("details");
+        regionEl.className = "heb-landing__regions-region";
+
+        const regionSummary = document.createElement("summary");
+        regionSummary.className = "heb-landing__regions-region-summary";
+
+        const regionLabel = document.createElement("span");
+        regionLabel.className = "heb-landing__regions-region-label";
+        regionLabel.textContent = label;
+
+        const storeCount = Array.from(cityMap.values()).reduce(
+          (sum, arr) => sum + arr.length,
+          0,
+        );
+        const regionCount = document.createElement("span");
+        regionCount.className = "heb-landing__regions-region-count";
+        regionCount.textContent = `${storeCount} stores · ${cityMap.size} cities`;
+
+        const regionCaret = document.createElement("span");
+        regionCaret.className = "heb-landing__regions-region-caret";
+        regionCaret.setAttribute("aria-hidden", "true");
+        regionCaret.textContent = "▾";
+
+        regionSummary.append(regionLabel, regionCount, regionCaret);
+        regionEl.appendChild(regionSummary);
+
+        const cityListEl = document.createElement("div");
+        cityListEl.className = "heb-landing__regions-cities";
+
+        const sortedCities = Array.from(cityMap.entries()).sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
+
+        sortedCities.forEach(([cityName, cityStores]) => {
+          const cityEl = document.createElement("details");
+          cityEl.className = "heb-landing__regions-city";
+
+          const citySummary = document.createElement("summary");
+          citySummary.className = "heb-landing__regions-city-summary";
+
+          const cityLabel = document.createElement("span");
+          cityLabel.className = "heb-landing__regions-city-label";
+          cityLabel.textContent = cityName;
+
+          const cityCount = document.createElement("span");
+          cityCount.className = "heb-landing__regions-city-count";
+          cityCount.textContent = String(cityStores.length);
+
+          const cityCaret = document.createElement("span");
+          cityCaret.className = "heb-landing__regions-city-caret";
+          cityCaret.setAttribute("aria-hidden", "true");
+          cityCaret.textContent = "▾";
+
+          citySummary.append(cityLabel, cityCount, cityCaret);
+          cityEl.appendChild(citySummary);
+
+          const storeListEl = document.createElement("ul");
+          storeListEl.className = "heb-landing__regions-stores";
+
+          cityStores.forEach((store) => {
+            const storeItem = document.createElement("li");
+            storeItem.className = "heb-landing__regions-store";
+
+            const addressEl = document.createElement("span");
+            addressEl.className = "heb-landing__regions-store-address";
+            addressEl.textContent = `${store.address}, ${store.city}, ${store.zip}`;
+
+            const infoBtn = document.createElement("button");
+            infoBtn.type = "button";
+            infoBtn.className = "heb-landing__regions-store-info";
+            infoBtn.dataset.flyRegion = store.regionId;
+            infoBtn.dataset.flyStore = store.id;
+            infoBtn.setAttribute(
+              "aria-label",
+              `View ${store.address} on the map`,
+            );
+            infoBtn.textContent = "View on map →";
+            infoBtn.addEventListener("click", () => {
+              closeModal();
+              // Defer the fly slightly so the modal exit animation
+              // begins before the camera starts moving — feels more
+              // intentional than the two happening at exactly the
+              // same frame.
+              window.setTimeout(() => {
+                enterRegionalView(store.regionId, store.id);
+              }, 120);
+            });
+
+            storeItem.append(addressEl, infoBtn);
+            storeListEl.appendChild(storeItem);
+          });
+
+          cityEl.appendChild(storeListEl);
+          cityListEl.appendChild(cityEl);
+        });
+
+        regionEl.appendChild(cityListEl);
+        container.appendChild(regionEl);
+      });
+    }
 
     // Build the six accordion sections (one per route) from the
     // routeConfigs dict. Each section gets a colored badge, a label, a
@@ -792,6 +1700,7 @@ const stationCount = hebStoreData.length;
         // last-hovered building scales back to its base size.
         hoveredStationId = null;
         storeTileLayer?.setHoveredStore(null);
+        hideStationTooltip();
       });
       instance.on("click", mapLayerIds.stations, handleStationMapClick);
 
@@ -1097,9 +2006,10 @@ const stationCount = hebStoreData.length;
       // the GLB lands; `loadTrainModel` clones a tinted copy from this
       // for each train. Stored at layer scope so the two load paths
       // can share the same normalized result.
-      let normalizedHatTemplate:
-        | { root: THREE.Group; size: THREE.Vector3 }
-        | null = null;
+      let normalizedHatTemplate: {
+        root: THREE.Group;
+        size: THREE.Vector3;
+      } | null = null;
       const EARTH_RADIUS_M = 6371008.8;
 
       const haversineMeters = (
@@ -1132,10 +2042,7 @@ const stationCount = hebStoreData.length;
             [lng1, lat1],
             0,
           );
-          const end = maplibregl.MercatorCoordinate.fromLngLat(
-            [lng2, lat2],
-            0,
-          );
+          const end = maplibregl.MercatorCoordinate.fromLngLat([lng2, lat2], 0);
           const length = haversineMeters(lng1, lat1, lng2, lat2);
           segments.push({
             startLng: lng1,
@@ -1161,7 +2068,10 @@ const stationCount = hebStoreData.length;
       // space (atan2(dy, dx)); since mercator Y grows southward, a
       // northbound train has negative dy — which is correct for the
       // Three.js Z-up rotation we apply.
-      const positionAlongRoute = (state: TrainState, distanceMeters: number) => {
+      const positionAlongRoute = (
+        state: TrainState,
+        distanceMeters: number,
+      ) => {
         if (state.segments.length === 0) return null;
         const d = Math.max(
           0,
@@ -1175,7 +2085,10 @@ const stationCount = hebStoreData.length;
           }
         }
         const segLen = chosen.length || 1;
-        const t = Math.max(0, Math.min(1, (d - chosen.cumulativeStart) / segLen));
+        const t = Math.max(
+          0,
+          Math.min(1, (d - chosen.cumulativeStart) / segLen),
+        );
         const mercX =
           chosen.startMercX + (chosen.endMercX - chosen.startMercX) * t;
         const mercY =
@@ -1184,10 +2097,8 @@ const stationCount = hebStoreData.length;
           chosen.endMercY - chosen.startMercY,
           chosen.endMercX - chosen.startMercX,
         );
-        const lng =
-          chosen.startLng + (chosen.endLng - chosen.startLng) * t;
-        const lat =
-          chosen.startLat + (chosen.endLat - chosen.startLat) * t;
+        const lng = chosen.startLng + (chosen.endLng - chosen.startLng) * t;
+        const lat = chosen.startLat + (chosen.endLat - chosen.startLat) * t;
         const meterScale = maplibregl.MercatorCoordinate.fromLngLat(
           [lng, lat],
           0,
@@ -1233,7 +2144,10 @@ const stationCount = hebStoreData.length;
             return;
           }
           state.pauseEndsAt = 0;
-          if (state.lastPausedStationIndex === state.stationDistances.length - 1) {
+          if (
+            state.lastPausedStationIndex ===
+            state.stationDistances.length - 1
+          ) {
             state.direction = -1;
           } else if (state.lastPausedStationIndex === 0) {
             state.direction = 1;
@@ -1867,6 +2781,26 @@ const stationCount = hebStoreData.length;
           // route short-circuit immediately and cost essentially nothing.
           tickTrains();
 
+          // Billboard the store buildings around their vertical (Z)
+          // axis so the H-E-B sign always faces the camera. The model
+          // is authored with the sign on its +Z face; after the Y-up
+          // → Z-up base rotation the sign points in scene −Y (i.e.
+          // map-north). At MapLibre bearing 0 the camera sits south of
+          // each store, so we need to rotate the building 180° to
+          // bring the sign around. As the user drag-rotates the map,
+          // the bearing changes and we add it on top — the result is
+          // that the sign tracks the camera direction every frame.
+          // Trains keep their own heading (atan2 from the route
+          // segment), cowboy hats are radially symmetric so they
+          // don't need this; only the store buildings get billboarded.
+          const bearingDeg = mapInstance?.getBearing() ?? 0;
+          const billboardYaw = Math.PI + (bearingDeg * Math.PI) / 180;
+          tileEntries.forEach((entry) => {
+            if (entry.modelGroup.visible) {
+              entry.modelGroup.rotation.z = billboardYaw;
+            }
+          });
+
           camera.projectionMatrix.fromArray(projectionMatrix);
           renderer.resetState();
           renderer.render(scene, camera);
@@ -2380,8 +3314,18 @@ const stationCount = hebStoreData.length;
       };
     }
 
-    function createStationFootprint(store: (typeof hebStores)[number]) {
-      const halfMeters = store.hub ? 450 : 320;
+    function createStationFootprint(store: (typeof storeDefinitions)[number]) {
+      // Click polygon must match the actual visible 3D-building extent,
+      // not a small fixed square. Otherwise (especially for the density-
+      // scaled stores like Abilene at 8.0× = ~10 km wide) the user has
+      // to click a tiny center area to register the selection. Use the
+      // same baseFootprint × multiplier that createStoreModelGroup uses
+      // so the click area exactly tracks what's drawn on the map.
+      const baseFootprintMeters = store.hub
+        ? hubStoreFootprintMeters
+        : regularStoreFootprintMeters;
+      const multiplier = computeStoreFootprintMultiplier(store);
+      const halfMeters = (baseFootprintMeters * multiplier) / 2;
       const latitudeRadians = (store.lat * Math.PI) / 180;
       const latOffset = halfMeters / 111_320;
       const lngOffset =
@@ -2434,23 +3378,66 @@ const stationCount = hebStoreData.length;
     }
 
     function handleStationMouseMove(event: MapLayerMouseEvent) {
-      const stationId = event.features?.[0]?.properties?.id as
-        | string
-        | undefined;
-      // Only react when the hovered building actually changes — `mousemove`
-      // can fire dozens of times per second while the cursor sits on one
-      // building. Idempotent calls into the layer would still cancel and
-      // restart the anime.js tween every frame.
-      if (!stationId || stationId === hoveredStationId) {
+      const properties = event.features?.[0]?.properties;
+      const stationId = properties?.id as string | undefined;
+      if (!stationId) {
+        return;
+      }
+      // The address-tooltip follows the cursor every frame so the
+      // speech-bubble's tail tracks the building the user is over.
+      // Reposition unconditionally; content update is gated by the
+      // hover-id change below.
+      if (viewState === "regional") {
+        positionStationTooltip(event);
+      }
+      // Hover animation + content updates only when the hovered
+      // building actually changes — `mousemove` fires dozens of times
+      // per second over the same feature, and idempotent calls would
+      // cancel/restart the anime.js scale tween every frame.
+      if (stationId === hoveredStationId) {
         return;
       }
       hoveredStationId = stationId;
-      // Hover animation only makes sense when the regional store models are
-      // actually on-screen. In state view the click target is a flat invisible
-      // extrusion (no 3D building to scale), so we skip the call.
       if (viewState === "regional") {
         storeTileLayer?.setHoveredStore(stationId);
+        if (properties) {
+          showStationTooltip(properties);
+        }
       }
+    }
+
+    function positionStationTooltip(event: MapLayerMouseEvent) {
+      if (!stationTooltip) return;
+      // The CSS `transform: translate(-50%, calc(-100% - 14px))` lifts
+      // the bubble's bottom-center to 14px above the cursor — so the
+      // left/top values are the raw cursor position.
+      stationTooltip.style.left = `${event.point.x}px`;
+      stationTooltip.style.top = `${event.point.y}px`;
+    }
+
+    function showStationTooltip(properties: Record<string, unknown>) {
+      if (!stationTooltip) return;
+      if (stationTooltipName) {
+        stationTooltipName.textContent = String(
+          properties.name ?? `H-E-B ${properties.city ?? ""}`,
+        );
+      }
+      if (stationTooltipAddress) {
+        const parts = [
+          String(properties.address ?? ""),
+          String(properties.city ?? ""),
+          String(properties.zip ?? ""),
+        ].filter(Boolean);
+        stationTooltipAddress.textContent = parts.join(", ");
+      }
+      stationTooltip.hidden = false;
+      stationTooltip.setAttribute("aria-hidden", "false");
+    }
+
+    function hideStationTooltip() {
+      if (!stationTooltip) return;
+      stationTooltip.hidden = true;
+      stationTooltip.setAttribute("aria-hidden", "true");
     }
 
     function handleStationMapClick(event: MapLayerMouseEvent) {
@@ -2613,8 +3600,7 @@ const stationCount = hebStoreData.length;
       const sinDLat = Math.sin(dLat / 2);
       const sinDLng = Math.sin(dLng / 2);
       const a =
-        sinDLat * sinDLat +
-        Math.cos(phi1) * Math.cos(phi2) * sinDLng * sinDLng;
+        sinDLat * sinDLat + Math.cos(phi1) * Math.cos(phi2) * sinDLng * sinDLng;
       return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(a)));
     }
 
@@ -2797,7 +3783,9 @@ const stationCount = hebStoreData.length;
 
         const coordinates: GeoJsonPosition[] = [];
         stations.forEach((selected) => {
-          const def = storeDefinitions.find((store) => store.id === selected.id);
+          const def = storeDefinitions.find(
+            (store) => store.id === selected.id,
+          );
           if (def) {
             coordinates.push([def.lng, def.lat]);
           }
@@ -2967,6 +3955,7 @@ const stationCount = hebStoreData.length;
     }
 
     function showLanding(fitCamera = true) {
+      hideStationTooltip();
       viewState = "landing";
       currentRegionId = null;
       returnViewState = "landing";
@@ -2992,6 +3981,7 @@ const stationCount = hebStoreData.length;
     }
 
     function showStateNetwork(fitCamera = true) {
+      hideStationTooltip();
       viewState = "state-network";
       currentRegionId = null;
       returnViewState = "state-network";
@@ -4093,6 +5083,615 @@ const stationCount = hebStoreData.length;
      Designed to sit unobtrusively on the right edge during regional
      view; scrolls internally when the traversal list grows.
      ───────────────────────────────────────────────────────────────── */
+  /* ─── Details modal ─────────────────────────────────────────────
+     Glass-card modal triggered by the "SEE DETAILS" button. The
+     backdrop is a full-viewport button so clicking outside the card
+     also closes (mirrors the X button). Open/close is driven by the
+     `data-modal-open` attribute the JS toggles; transitions handle
+     the fade + lift animation.
+     ────────────────────────────────────────────────────────────── */
+  .heb-landing__modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(1rem, 4vw, 3rem);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease;
+  }
+
+  .heb-landing__modal[data-modal-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .heb-landing__modal[hidden] {
+    display: none;
+  }
+
+  .heb-landing__modal-backdrop {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    background: rgba(8, 11, 16, 0.55);
+    backdrop-filter: blur(14px) saturate(120%);
+    -webkit-backdrop-filter: blur(14px) saturate(120%);
+    cursor: pointer;
+  }
+
+  .heb-landing__modal-card {
+    position: relative;
+    z-index: 1;
+    width: min(92vw, 36rem);
+    max-height: calc(100vh - clamp(2rem, 8vw, 6rem));
+    overflow-y: auto;
+    padding: clamp(1.4rem, 3vw, 2rem) clamp(1.5rem, 3vw, 2.25rem);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 1rem;
+    background: linear-gradient(
+      140deg,
+      rgba(40, 48, 60, 0.32),
+      rgba(18, 22, 28, 0.4)
+    );
+    box-shadow:
+      0 32px 64px rgba(8, 12, 18, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(24px) saturate(140%);
+    -webkit-backdrop-filter: blur(24px) saturate(140%);
+    color: var(--color-text-primary, #f5f5f5);
+    transform: translateY(12px) scale(0.97);
+    transition:
+      transform 220ms cubic-bezier(0.22, 1.2, 0.36, 1),
+      opacity 220ms ease;
+    opacity: 0;
+  }
+
+  .heb-landing__modal[data-modal-open="true"] .heb-landing__modal-card {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+
+  .heb-landing__modal-close {
+    position: absolute;
+    top: 0.7rem;
+    right: 0.7rem;
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.85);
+    font: inherit;
+    font-size: 1.2rem;
+    font-weight: 600;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .heb-landing__modal-close:hover,
+  .heb-landing__modal-close:focus-visible {
+    background: var(--color-accent, #ff3333);
+    border-color: var(--color-accent, #ff3333);
+    color: #fff;
+    outline: none;
+    transform: scale(1.05);
+  }
+
+  .heb-landing__modal-kicker {
+    margin: 0 0 0.4rem;
+    color: var(--color-accent, #ff3333);
+    font-family: var(--font-heading-secondary, sans-serif);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__modal-title {
+    margin: 0 0 1.1rem;
+    color: #fff;
+    font-family: var(--font-heading-primary, sans-serif);
+    font-size: clamp(1.5rem, 3vw, 2.1rem);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.1;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__modal-body {
+    color: rgba(255, 255, 255, 0.88);
+    font-family: var(--font-body, sans-serif);
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+
+  .heb-landing__modal-body p {
+    margin: 0 0 0.85rem;
+  }
+
+  .heb-landing__modal-body p:last-child {
+    margin-bottom: 0;
+  }
+
+  .heb-landing__modal-body em {
+    color: #fff;
+    font-style: italic;
+    font-weight: 500;
+  }
+
+  .heb-landing__modal-postscript {
+    margin-top: 1.1rem !important;
+    padding-top: 0.85rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.85rem;
+  }
+
+  .heb-landing__modal-postscript strong {
+    color: var(--color-accent, #ff3333);
+    font-family: var(--font-heading-secondary, sans-serif);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+
+  /* ─── Cities modal ──────────────────────────────────────────────
+     Ranked population list, top 3 cities get a colored cowboy-hat
+     medal (gold / silver / bronze). Each row has an animated
+     counter and a progress bar that scales relative to the
+     highest-population city in the list.
+     ────────────────────────────────────────────────────────────── */
+  .heb-landing__cities-subtitle {
+    margin: 0 0 1rem;
+    color: rgba(255, 255, 255, 0.72);
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .heb-landing__cities-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .heb-landing__cities-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.55rem;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .heb-landing__cities-rank {
+    flex: 0 0 auto;
+    width: 1.9rem;
+    height: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.55);
+    letter-spacing: 0.04em;
+  }
+
+  .heb-landing__cities-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .heb-landing__cities-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .heb-landing__cities-name {
+    flex: 1 1 auto;
+    color: #fff;
+    font-family: var(--font-heading-secondary);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .heb-landing__cities-count {
+    flex: 0 0 auto;
+    color: var(--color-accent, #ff3333);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .heb-landing__cities-bar-track {
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  /* Single H-E-B red gradient bar for every row — brighter on the
+     left, deeper on the right, with a soft red glow so the bars
+     read as the headline visual element of the modal. */
+  .heb-landing__cities-bar {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ff3a3a 0%, #e11921 60%, #b20d14 100%);
+    box-shadow:
+      0 0 10px rgba(225, 25, 33, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  }
+
+  .heb-landing__cities-meta {
+    color: rgba(255, 255, 255, 0.55);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+
+  /* ─── Get Started tutorial controls ─────────────────────────────
+     Intro paragraph + a list of mouse-control rows. Each row is an
+     SVG mouse icon (currentColor outline + accent-red highlight on
+     the relevant button/wheel) plus a label/description pair. The
+     `.heb-landing__getstarted-icon-accent` class is the per-row
+     highlighted area — colored via the global --color-accent token.
+     ────────────────────────────────────────────────────────────── */
+  .heb-landing__getstarted-intro {
+    margin: 0 0 1.2rem;
+    color: rgba(255, 255, 255, 0.88);
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    line-height: 1.55;
+  }
+
+  .heb-landing__getstarted-controls {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.7rem;
+  }
+
+  .heb-landing__getstarted-control {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.55rem;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .heb-landing__getstarted-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 3rem;
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .heb-landing__getstarted-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .heb-landing__getstarted-icon-accent {
+    fill: var(--color-accent, #ff3333) !important;
+  }
+
+  .heb-landing__getstarted-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+
+  .heb-landing__getstarted-label {
+    color: #fff;
+    font-family: var(--font-heading-secondary);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__getstarted-desc {
+    color: rgba(255, 255, 255, 0.72);
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+    line-height: 1.3;
+  }
+
+  @media (max-width: 540px) {
+    .heb-landing__getstarted-controls {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ─── Regions modal tree ────────────────────────────────────────
+     Nested <details> elements: region → city → stores. Native
+     disclosure widget handles open/close, CSS only styles the
+     caret rotation + spacing. Each store row shows the address +
+     a "View on map" button that flies into the regional view for
+     that specific store.
+     ────────────────────────────────────────────────────────────── */
+  .heb-landing__regions-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .heb-landing__regions-region {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 0.55rem;
+    background: rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+  }
+
+  .heb-landing__regions-region > summary,
+  .heb-landing__regions-city > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    transition: background-color 160ms ease;
+  }
+
+  .heb-landing__regions-region > summary::-webkit-details-marker,
+  .heb-landing__regions-city > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .heb-landing__regions-region > summary {
+    padding: 0.65rem 0.85rem;
+    font-family: var(--font-heading-secondary);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  .heb-landing__regions-region > summary:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .heb-landing__regions-region-label {
+    flex: 1 1 auto;
+  }
+
+  .heb-landing__regions-region-count {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .heb-landing__regions-region-caret,
+  .heb-landing__regions-city-caret {
+    flex: 0 0 auto;
+    width: 1rem;
+    text-align: center;
+    font-size: 0.7rem;
+    line-height: 1;
+    transition: transform 220ms ease;
+  }
+
+  .heb-landing__regions-region[open]
+    > summary
+    > .heb-landing__regions-region-caret,
+  .heb-landing__regions-city[open]
+    > summary
+    > .heb-landing__regions-city-caret {
+    transform: rotate(180deg);
+  }
+
+  .heb-landing__regions-cities {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.25rem 0.5rem 0.55rem;
+  }
+
+  .heb-landing__regions-city {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.45rem;
+    background: rgba(255, 255, 255, 0.025);
+    overflow: hidden;
+  }
+
+  .heb-landing__regions-city > summary {
+    padding: 0.42rem 0.65rem;
+    font-family: var(--font-heading-secondary);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.92);
+  }
+
+  .heb-landing__regions-city > summary:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .heb-landing__regions-city-label {
+    flex: 1 1 auto;
+  }
+
+  .heb-landing__regions-city-count {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .heb-landing__regions-stores {
+    margin: 0;
+    padding: 0.25rem 0.45rem 0.45rem;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+  }
+
+  .heb-landing__regions-store {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.55rem;
+    border-radius: 0.4rem;
+    background: rgba(0, 0, 0, 0.22);
+    transition: background-color 160ms ease;
+  }
+
+  .heb-landing__regions-store:hover {
+    background: rgba(0, 0, 0, 0.32);
+  }
+
+  .heb-landing__regions-store-address {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.82);
+    font-family: var(--font-body);
+    font-size: 0.7rem;
+    font-weight: 400;
+    line-height: 1.32;
+    word-break: break-word;
+  }
+
+  .heb-landing__regions-store-info {
+    flex: 0 0 auto;
+    padding: 0.32rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.92);
+    font-family: var(--font-heading-secondary);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .heb-landing__regions-store-info:hover,
+  .heb-landing__regions-store-info:focus-visible {
+    background: var(--color-accent, #ff3333);
+    border-color: var(--color-accent, #ff3333);
+    color: #fff;
+    outline: none;
+    transform: scale(1.05);
+  }
+
+  /* ─── Station hover tooltip ─────────────────────────────────────
+     A small speech-bubble that follows the cursor while hovering a
+     3D H-E-B in regional view. The bubble's `transform: translate(
+     -50%, calc(-100% - 14px))` lifts it 14px above the cursor so the
+     downward-pointing tail (the ::after triangle) sits on the
+     building. handleStationMouseMove writes raw cursor coords into
+     left/top; CSS handles all the placement math.
+     ────────────────────────────────────────────────────────────── */
+  .heb-landing__station-tooltip {
+    position: absolute;
+    z-index: 13;
+    max-width: 18rem;
+    padding: 0.5rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 0.55rem;
+    background: rgba(15, 20, 28, 0.94);
+    color: #fff;
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.42),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    pointer-events: none;
+    transform: translate(-50%, calc(-100% - 14px));
+    transform-origin: bottom center;
+  }
+
+  .heb-landing__station-tooltip[hidden] {
+    display: none;
+  }
+
+  /* Downward speech-bubble tail */
+  .heb-landing__station-tooltip::after {
+    content: "";
+    position: absolute;
+    bottom: -7px;
+    left: 50%;
+    margin-left: -7px;
+    width: 0;
+    height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 7px solid rgba(15, 20, 28, 0.94);
+  }
+
+  .heb-landing__station-tooltip-name {
+    margin: 0 0 0.18rem;
+    color: var(--color-accent, #ff3333);
+    font-family: var(--font-heading-secondary);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .heb-landing__station-tooltip-address {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.88);
+    font-family: var(--font-body);
+    font-size: 0.7rem;
+    font-weight: 500;
+    line-height: 1.32;
+  }
+
   .heb-landing__selection-panel {
     position: absolute;
     top: clamp(0.75rem, 2.5vh, 1.25rem);
@@ -4473,8 +6072,7 @@ const stationCount = hebStoreData.length;
     background: rgba(0, 0, 0, 0.18);
   }
 
-  .heb-landing__route-section[data-route-open="true"]
-    .heb-landing__route-icon {
+  .heb-landing__route-section[data-route-open="true"] .heb-landing__route-icon {
     transform: rotate(180deg);
     background: rgba(0, 0, 0, 0.22);
   }
