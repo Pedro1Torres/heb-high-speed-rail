@@ -72,6 +72,16 @@ const stationCount = hebStoreData.length;
       aria-label="Selected H-E-B stations"
       hidden
     >
+      <button
+        type="button"
+        class="heb-landing__selection-clear"
+        data-clear-routes
+        aria-label="Clear all routes"
+        hidden
+      >
+        <span aria-hidden="true">×</span>
+        <span class="heb-landing__selection-clear-label">Clear</span>
+      </button>
       <header class="heb-landing__selection-panel-header">
         <p class="heb-landing__selection-panel-kicker">Your Traversal</p>
         <h3 class="heb-landing__selection-panel-title">Routes</h3>
@@ -597,6 +607,7 @@ const stationCount = hebStoreData.length;
         routeId: RouteId,
         coordinates: GeoJsonPosition[] | null,
       ) => void;
+      setStoreColors: (storeId: string, hexColors: string[]) => void;
     };
 
     const svgSnapPrecision = 0.001;
@@ -642,6 +653,22 @@ const stationCount = hebStoreData.length;
     //   sees a continent; a real train speed would look frozen. Tuned to
     //   cross a typical region in ~6s and the whole state in ~30s.
     const trainFootprintMeters = 4500;
+    // State-view footprint matches (and slightly exceeds) the hub
+    // cowboy-hat marker so the train reads as the same visual weight
+    // as a hub HEB at full state zoom. Bumped from 18 km because trains
+    // are LONG and NARROW — the bounding-box-max scaling means a
+    // 18 km train was visually thinner than an 18 km round hat. 26 km
+    // brings the train's apparent on-map mass closer to a hub hat's.
+    const trainStateFootprintMeters = 26000;
+    // Zoom window over which the train scale lerps from state-view
+    // size DOWN to regional-view size. Below `trainScaleZoomStart`
+    // the train stays at its full state scale; above
+    // `trainScaleZoomEnd` it's fully at regional scale; in between
+    // it interpolates. We hold state scale longer than the previous
+    // (5.1 → 10.25) range so users navigating around the state view
+    // see big trains for the whole exploration.
+    const trainScaleZoomStart = 8.5;
+    const trainScaleZoomEnd = 11.0;
     const trainSpeedMps = 28000;
     // Time the train sits at each station before continuing — "picking up
     // passengers". Applied at every station including the two route
@@ -954,6 +981,17 @@ const stationCount = hebStoreData.length;
     initRegionsModal();
     initGetStartedModal();
     initCitiesModal();
+    // "× Clear" button at the top of the routes panel — clears every
+    // route's selections in one click. Hidden whenever the total count
+    // is 0 (toggled by updateSelectionMeta), so the button only shows
+    // when there's something to clear.
+    root
+      .querySelectorAll<HTMLButtonElement>("[data-clear-routes]")
+      .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          clearSelectedStations();
+        });
+      });
     map = createMap();
     introCopy.addEventListener("click", revealStateNetwork);
     introCopy.addEventListener("keydown", handleIntroKeydown);
@@ -1385,10 +1423,19 @@ const stationCount = hebStoreData.length;
 
         const regionSummary = document.createElement("summary");
         regionSummary.className = "heb-landing__regions-region-summary";
+        // Inline the flex layout so the label, count, and caret stay
+        // spaced apart even when an external stylesheet wins specificity
+        // over the scoped class rule (without this the count was butting
+        // straight against the region name: "North Texas23 stores").
+        regionSummary.style.display = "flex";
+        regionSummary.style.alignItems = "center";
+        regionSummary.style.gap = "0.75rem";
 
         const regionLabel = document.createElement("span");
         regionLabel.className = "heb-landing__regions-region-label";
         regionLabel.textContent = label;
+        regionLabel.style.flex = "1 1 auto";
+        regionLabel.style.minWidth = "0";
 
         const storeCount = Array.from(cityMap.values()).reduce(
           (sum, arr) => sum + arr.length,
@@ -1397,11 +1444,13 @@ const stationCount = hebStoreData.length;
         const regionCount = document.createElement("span");
         regionCount.className = "heb-landing__regions-region-count";
         regionCount.textContent = `${storeCount} stores · ${cityMap.size} cities`;
+        regionCount.style.flex = "0 0 auto";
 
         const regionCaret = document.createElement("span");
         regionCaret.className = "heb-landing__regions-region-caret";
         regionCaret.setAttribute("aria-hidden", "true");
         regionCaret.textContent = "▾";
+        regionCaret.style.flex = "0 0 auto";
 
         regionSummary.append(regionLabel, regionCount, regionCaret);
         regionEl.appendChild(regionSummary);
@@ -1419,19 +1468,26 @@ const stationCount = hebStoreData.length;
 
           const citySummary = document.createElement("summary");
           citySummary.className = "heb-landing__regions-city-summary";
+          citySummary.style.display = "flex";
+          citySummary.style.alignItems = "center";
+          citySummary.style.gap = "0.6rem";
 
           const cityLabel = document.createElement("span");
           cityLabel.className = "heb-landing__regions-city-label";
           cityLabel.textContent = cityName;
+          cityLabel.style.flex = "1 1 auto";
+          cityLabel.style.minWidth = "0";
 
           const cityCount = document.createElement("span");
           cityCount.className = "heb-landing__regions-city-count";
           cityCount.textContent = String(cityStores.length);
+          cityCount.style.flex = "0 0 auto";
 
           const cityCaret = document.createElement("span");
           cityCaret.className = "heb-landing__regions-city-caret";
           cityCaret.setAttribute("aria-hidden", "true");
           cityCaret.textContent = "▾";
+          cityCaret.style.flex = "0 0 auto";
 
           citySummary.append(cityLabel, cityCount, cityCaret);
           cityEl.appendChild(citySummary);
@@ -1524,6 +1580,13 @@ const stationCount = hebStoreData.length;
         header.style.fontWeight = "700";
         header.style.letterSpacing = "0.18em";
         header.style.textTransform = "uppercase";
+        // Inline the flex layout — the CSS class rule doesn't always
+        // reach JS-created elements under Astro scoping, which is why
+        // "Route 1" and the ETA pill were sitting flush together. Set
+        // them here so the gap is guaranteed.
+        header.style.display = "flex";
+        header.style.alignItems = "center";
+        header.style.gap = "0.85rem";
 
         // Header layout: label (Oswald uppercase) + ETA pill + chevron.
         // No count is shown here — previously the "0" floated right
@@ -1540,6 +1603,11 @@ const stationCount = hebStoreData.length;
         label.style.fontWeight = "700";
         label.style.letterSpacing = "0.18em";
         label.style.textTransform = "uppercase";
+        // Label takes the available space so the ETA pill is pushed
+        // toward the right, with the gap on the header providing
+        // breathing room before the pill.
+        label.style.flex = "1 1 auto";
+        label.style.minWidth = "0";
 
         // ETA pill — populated by updateSelectionMeta whenever the
         // route mutates. Stays empty (and hidden via :empty CSS) when
@@ -1553,6 +1621,13 @@ const stationCount = hebStoreData.length;
         eta.setAttribute("aria-hidden", "true");
         eta.style.background = cfg.textColor;
         eta.style.color = cfg.lineColor;
+        // A little extra padding inside the pill so the time number
+        // breathes against the pill's edge, plus an explicit flex
+        // basis so the pill doesn't get squashed by the label.
+        eta.style.flex = "0 0 auto";
+        eta.style.padding = "0.14rem 0.55rem";
+        eta.style.borderRadius = "999px";
+        eta.style.marginLeft = "0.15rem";
 
         const icon = document.createElement("span");
         icon.className = "heb-landing__route-icon";
@@ -1969,7 +2044,13 @@ const stationCount = hebStoreData.length;
         group: THREE.Group | null;
         modelRoot: THREE.Group | null;
         hatGroup: THREE.Group | null;
-        baseFootprintScale: number;
+        // Two cached scales — the per-frame lerp picks between them
+        // based on the camera's current zoom. `regionalScale` matches
+        // `trainFootprintMeters` (4.5 km); `stateScale` matches
+        // `trainStateFootprintMeters` (18 km) so the train doesn't
+        // vanish at state view.
+        regionalScale: number;
+        stateScale: number;
         segments: TrainSegment[];
         stationDistances: number[];
         totalLengthMeters: number;
@@ -1987,7 +2068,8 @@ const stationCount = hebStoreData.length;
             group: null,
             modelRoot: null,
             hatGroup: null,
-            baseFootprintScale: 1,
+            regionalScale: 1,
+            stateScale: 1,
             segments: [],
             stationDistances: [],
             totalLengthMeters: 0,
@@ -2116,7 +2198,24 @@ const stationCount = hebStoreData.length;
         if (!p) return;
         state.group.visible = true;
         state.group.position.set(p.mercX, p.mercY, 0);
-        state.group.scale.setScalar(p.meterScale * state.baseFootprintScale);
+        // Lerp the footprint scale between state-view size (large,
+        // matches the cowboy-hat markers) and regional-view size
+        // (smaller, building-relative). The transition window is
+        // `trainScaleZoomStart` → `trainScaleZoomEnd`: below the
+        // start the train stays at its full state scale; above the
+        // end it's fully regional; in between it interpolates.
+        const currentZoom = mapInstance?.getZoom() ?? trainScaleZoomStart;
+        const t = Math.max(
+          0,
+          Math.min(
+            1,
+            (currentZoom - trainScaleZoomStart) /
+              Math.max(trainScaleZoomEnd - trainScaleZoomStart, 0.0001),
+          ),
+        );
+        const lerpedScale =
+          state.stateScale + (state.regionalScale - state.stateScale) * t;
+        state.group.scale.setScalar(p.meterScale * lerpedScale);
         const reverseFlip = state.direction === -1 ? Math.PI : 0;
         state.group.rotation.set(
           0,
@@ -2422,7 +2521,8 @@ const stationCount = hebStoreData.length;
             .setFromObject(templateRoot)
             .getSize(new THREE.Vector3());
           const footprint = Math.max(templateSize.x, templateSize.y, 0.0001);
-          const baseFootprintScale = trainFootprintMeters / footprint;
+          const regionalScale = trainFootprintMeters / footprint;
+          const stateScale = trainStateFootprintMeters / footprint;
 
           // Now build one clone per route, attach a tinted hat to each,
           // and seed the corresponding TrainState.
@@ -2447,7 +2547,8 @@ const stationCount = hebStoreData.length;
             scene?.add(group);
             state.group = group;
             state.modelRoot = modelClone;
-            state.baseFootprintScale = baseFootprintScale;
+            state.regionalScale = regionalScale;
+            state.stateScale = stateScale;
 
             // If `updateRailroadRoute` ran before the GLB finished
             // loading, the route data is already cached on the state.
@@ -2596,9 +2697,56 @@ const stationCount = hebStoreData.length;
           // Publish the hat template to layer scope so `loadTrainModel`
           // can clone tinted copies for each route's train.
           normalizedHatTemplate = normalizedMarker;
+          // Compute local-space Z bounds for the store and hat
+          // templates once. These feed the stripe shader so band
+          // boundaries fall at consistent heights across every store
+          // instance regardless of per-store scaling.
+          const storeLocalBounds = new THREE.Box3().setFromObject(
+            normalizedModel.root,
+          );
+          const hatLocalBounds = new THREE.Box3().setFromObject(
+            normalizedMarker.root,
+          );
+
+          // Deep-clone every material on every store + hat instance,
+          // and attach the stripe shader to each clone. Without per-
+          // instance materials, tinting one store would tint all of
+          // them (Three.js `clone(true)` shares material references).
+          const cloneMaterialsPerInstance = (
+            root: THREE.Object3D,
+            minZ: number,
+            maxZ: number,
+          ) => {
+            root.traverse((child) => {
+              const mesh = child as THREE.Mesh;
+              if (!mesh.isMesh) return;
+              const trackClone = (m: THREE.Material) => {
+                const c = m.clone();
+                attachStripeShader(c, minZ, maxZ);
+                ownedMaterials.add(c);
+                return c;
+              };
+              if (Array.isArray(mesh.material)) {
+                mesh.material = mesh.material.map(trackClone);
+              } else {
+                mesh.material = trackClone(mesh.material);
+              }
+            });
+          };
+
           storeDefinitions.forEach((store) => {
             const storeBuild = createStoreModelGroup(store, normalizedModel);
             const stateMarker = createStateMarkerGroup(store, normalizedMarker);
+            cloneMaterialsPerInstance(
+              storeBuild.model,
+              storeLocalBounds.min.z,
+              storeLocalBounds.max.z,
+            );
+            cloneMaterialsPerInstance(
+              stateMarker.marker,
+              hatLocalBounds.min.z,
+              hatLocalBounds.max.z,
+            );
             const entry: StoreTileEntry = {
               storeId: store.id,
               modelGroup: storeBuild.group,
@@ -2656,6 +2804,135 @@ const stationCount = hebStoreData.length;
           },
         });
         return animation;
+      };
+
+      // Per-store route tinting. Three cases:
+      //  - 0 colors  → revert to default white (matches GLB authored)
+      //  - 1 color   → solid tint via material.color
+      //  - 2+ colors → real horizontal stripes via injected shader.
+      //                Local Z (height) is divided into N bands; each
+      //                fragment picks its color from the band it sits
+      //                in. Result is actual physical stripes wrapping
+      //                the building from bottom to top, not UV stripes.
+      //
+      // The H-E-B red letter material on the building is skipped in
+      // every case so the sign stays red. The cowboy hat has no red
+      // parts so it picks up the full tint / stripes.
+
+      // Per-material uniform handle so setStoreColors can poke stripe
+      // count + colors at runtime without recompiling the shader.
+      type StripeUniforms = {
+        stripeColors: { value: THREE.Color[] };
+        stripeCount: { value: number };
+        stripeMinZ: { value: number };
+        stripeMaxZ: { value: number };
+      };
+      // Max stripes supported by the shader. 5 non-black routes is the
+      // current upper bound; 8 leaves some headroom without ballooning
+      // the uniform array.
+      const MAX_STRIPES = 8;
+
+      // Wires a `MeshStandardMaterial` clone with the stripe shader
+      // injection. The shader uses `stripeCount` as a gate — when 0 or
+      // 1 it falls through to the default `diffuse` path (so solid
+      // tints and untinted stores still render exactly as before).
+      const attachStripeShader = (
+        material: THREE.Material,
+        minZ: number,
+        maxZ: number,
+      ): StripeUniforms => {
+        const uniforms: StripeUniforms = {
+          stripeColors: {
+            value: Array.from(
+              { length: MAX_STRIPES },
+              () => new THREE.Color(1, 1, 1),
+            ),
+          },
+          stripeCount: { value: 0 },
+          stripeMinZ: { value: minZ },
+          stripeMaxZ: { value: maxZ },
+        };
+        material.userData.stripeUniforms = uniforms;
+
+        material.onBeforeCompile = (shader) => {
+          shader.uniforms.stripeColors = uniforms.stripeColors;
+          shader.uniforms.stripeCount = uniforms.stripeCount;
+          shader.uniforms.stripeMinZ = uniforms.stripeMinZ;
+          shader.uniforms.stripeMaxZ = uniforms.stripeMaxZ;
+
+          shader.vertexShader = shader.vertexShader
+            .replace(
+              "void main() {",
+              "varying vec3 vStripeLocalPos;\nvoid main() {",
+            )
+            .replace(
+              "#include <begin_vertex>",
+              "#include <begin_vertex>\nvStripeLocalPos = transformed;",
+            );
+
+          shader.fragmentShader = shader.fragmentShader
+            .replace(
+              "void main() {",
+              `varying vec3 vStripeLocalPos;\nuniform vec3 stripeColors[${MAX_STRIPES}];\nuniform int stripeCount;\nuniform float stripeMinZ;\nuniform float stripeMaxZ;\nvoid main() {`,
+            )
+            .replace(
+              "vec4 diffuseColor = vec4( diffuse, opacity );",
+              `vec3 stripeDiffuse = diffuse;\nif (stripeCount >= 2) {\n  float zRange = max(stripeMaxZ - stripeMinZ, 0.0001);\n  float t = clamp((vStripeLocalPos.z - stripeMinZ) / zRange, 0.0, 0.9999);\n  int idx = int(floor(t * float(stripeCount)));\n  if (idx >= ${MAX_STRIPES}) idx = ${MAX_STRIPES} - 1;\n  stripeDiffuse = stripeColors[idx];\n}\nvec4 diffuseColor = vec4(stripeDiffuse, opacity);`,
+            );
+        };
+
+        return uniforms;
+      };
+
+      const applyTintToObject = (
+        root: THREE.Object3D,
+        hexColors: string[],
+        skipRed: boolean,
+      ) => {
+        root.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const mats = Array.isArray(mesh.material)
+            ? mesh.material
+            : [mesh.material];
+          mats.forEach((m) => {
+            if (skipRed && isHebRedMaterial(m)) return;
+            const standard = m as THREE.MeshStandardMaterial;
+            const uniforms = standard.userData?.stripeUniforms as
+              | StripeUniforms
+              | undefined;
+            if (hexColors.length >= 2 && uniforms) {
+              // Stripe mode — push colors into the uniform array,
+              // set count so the shader takes the stripe branch.
+              // material.color is set to white so the shader's
+              // stripe color is the final diffuse (no double-tint).
+              const palette = uniforms.stripeColors.value;
+              for (let i = 0; i < palette.length; i += 1) {
+                palette[i].set(
+                  i < hexColors.length ? hexColors[i] : 0xffffff,
+                );
+              }
+              uniforms.stripeCount.value = Math.min(
+                hexColors.length,
+                MAX_STRIPES,
+              );
+              standard.color?.set(0xffffff);
+            } else {
+              // Solid (or default-white) mode — shader falls through
+              // to the standard diffuse path using material.color.
+              if (uniforms) uniforms.stripeCount.value = 0;
+              standard.color?.set(hexColors[0] ?? 0xffffff);
+            }
+            standard.needsUpdate = true;
+          });
+        });
+      };
+
+      const setStoreColors = (storeId: string, hexColors: string[]) => {
+        const entry = tileEntriesById.get(storeId);
+        if (!entry) return;
+        applyTintToObject(entry.storeModel, hexColors, true);
+        applyTintToObject(entry.stateMarkerModel, hexColors, false);
       };
 
       const setHoveredStore = (storeId: string | null) => {
@@ -2877,6 +3154,7 @@ const stationCount = hebStoreData.length;
         setHoveredStore,
         pulseStore,
         setRoute,
+        setStoreColors,
       };
     }
 
@@ -3507,6 +3785,7 @@ const stationCount = hebStoreData.length;
       renderSelectionListItem(routeId, selection);
       updateSelectionMeta();
       updateRailroadRoute(routeId);
+      updateAllStoreTints();
       // Auto-expand this route's section so the user immediately sees
       // what they just selected. If it was already open we leave it
       // open. Clicking the header still toggles it shut afterward.
@@ -3524,6 +3803,7 @@ const stationCount = hebStoreData.length;
       // respond to the removal in the same frame as the click; the
       // list-item collapse animation below is a DOM-level effect only.
       updateRailroadRoute(routeId);
+      updateAllStoreTints();
 
       const list = root.querySelector<HTMLOListElement>(
         `[data-selection-list="${routeId}"]`,
@@ -3723,8 +4003,31 @@ const stationCount = hebStoreData.length;
       });
     }
 
+    // Collect every non-black route a store appears in. The Three.js
+    // layer turns that into:
+    //   0 colors → white (default)
+    //   1 color  → solid tint
+    //   2+       → striped texture (one band per route, in route order)
+    // Black-route-only stores stay white per spec.
+    function updateAllStoreTints() {
+      if (!storeTileLayer) return;
+      storeDefinitions.forEach((store) => {
+        const colors: string[] = [];
+        for (const id of ROUTE_IDS) {
+          if (id === "black") continue;
+          if (routeStations[id].some((s) => s.id === store.id)) {
+            colors.push(routeConfigs[id].lineColor);
+          }
+        }
+        storeTileLayer?.setStoreColors(store.id, colors);
+      });
+    }
+
     function updateSelectionMeta() {
       let total = 0;
+      const clearButton = root.querySelector<HTMLButtonElement>(
+        "[data-clear-routes]",
+      );
       ROUTE_IDS.forEach((id) => {
         const count = routeStations[id].length;
         total += count;
@@ -3752,6 +4055,10 @@ const stationCount = hebStoreData.length;
         }
       });
       selectionCount.textContent = `${total} ${total === 1 ? "station" : "stations"}`;
+      if (clearButton) {
+        // Show the × Clear button only when there's something to clear.
+        clearButton.hidden = total === 0;
+      }
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -3829,6 +4136,7 @@ const stationCount = hebStoreData.length;
       });
       updateSelectionMeta();
       updateRailroadRoute();
+      updateAllStoreTints();
     }
 
     function setSelectionPanelVisible(isVisible: boolean) {
@@ -3995,10 +4303,13 @@ const stationCount = hebStoreData.length;
       introCopy.style.visibility = "hidden";
       setStationLayerMode("state");
       setRouteLayerVisible(false);
-      // Hide the panel while at the state-network view — the panel is the
-      // "regional traversal" log. Selections remain in memory so returning
-      // to regional view shows the same list (no surprise erasure).
-      setSelectionPanelVisible(false);
+      // Show the routes panel in state view too — the dashed colored
+      // route lines and animated trains are visible across the whole
+      // state from here, so the accordion is genuinely useful (lets
+      // you switch active routes, see ETAs, and remove stations
+      // without flying into a region first).
+      setSelectionPanelVisible(true);
+      updateSelectionMeta();
       syncLodFromZoom();
 
       if (fitCamera) {
@@ -4892,7 +5203,7 @@ const stationCount = hebStoreData.length;
     min-height: 2.25rem;
     padding: 0 0.95rem;
     border-radius: 999px;
-    color: rgba(255, 255, 255, 0.92);
+    color: #fff;
     font-family: var(--font-heading-secondary);
     font-size: 0.74rem;
     font-weight: 600;
@@ -4900,7 +5211,13 @@ const stationCount = hebStoreData.length;
     line-height: 1;
     text-decoration: none;
     text-transform: uppercase;
-    text-shadow: 0 2px 14px rgba(35, 45, 56, 0.26);
+    /* Layered shadow — close hard drop (1-2px) for crisp letter
+       edges, wider blur for the dark halo that keeps the nav text
+       legible against any tile color rolling under it. */
+    text-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.7),
+      0 2px 8px rgba(0, 0, 0, 0.5),
+      0 4px 14px rgba(35, 45, 56, 0.35);
     transition:
       background-color 160ms ease,
       color 160ms ease,
@@ -4931,9 +5248,19 @@ const stationCount = hebStoreData.length;
     width: min(92vw, 980px);
     padding: 0 1.25rem;
     text-align: center;
+    /* Layered shadow stack — the close blur (4px) puts a hard edge
+       around each glyph so it pops off bright map regions; the
+       further blurs (16px + 32px) carry a wider dark halo so the
+       text stays readable even over the brightest highway tiles.
+       The deepest layer is the previously-authored 34px ambient
+       drop. Stacking like this gives the headlines a near-cinematic
+       contrast against the basemap. */
     text-shadow:
-      0 12px 34px rgba(40, 48, 58, 0.32),
-      0 2px 12px rgba(80, 17, 22, 0.16);
+      0 1px 2px rgba(0, 0, 0, 0.75),
+      0 2px 4px rgba(0, 0, 0, 0.55),
+      0 4px 16px rgba(0, 0, 0, 0.55),
+      0 8px 32px rgba(15, 18, 24, 0.55),
+      0 12px 34px rgba(40, 48, 58, 0.45);
     transform-origin: center;
     will-change: opacity, transform;
     cursor: pointer;
@@ -4955,12 +5282,15 @@ const stationCount = hebStoreData.length;
 
   .heb-landing__eyebrow {
     margin: 0 0 0.65rem;
-    color: rgba(255, 255, 255, 0.82);
+    color: rgba(255, 255, 255, 0.95);
     font-family: var(--font-heading-secondary);
     font-size: clamp(0.72rem, 1.3vw, 0.9rem);
     font-weight: 600;
     letter-spacing: 0.18em;
     text-transform: uppercase;
+    text-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.75),
+      0 2px 6px rgba(0, 0, 0, 0.55);
   }
 
   .heb-landing__copy h1 {
@@ -4972,16 +5302,28 @@ const stationCount = hebStoreData.length;
     letter-spacing: 0.06em;
     line-height: 0.95;
     text-transform: uppercase;
+    /* Extra hard shadow specifically on the giant headline so the
+       white glyphs separate from any color the basemap throws at
+       them. Layered: razor-sharp 2px close shadow, plus broader
+       diffuse glows for depth. Inherits the parent .copy shadow
+       too, so this is additive. */
+    text-shadow:
+      0 2px 0 rgba(0, 0, 0, 0.55),
+      0 4px 12px rgba(0, 0, 0, 0.7),
+      0 10px 28px rgba(0, 0, 0, 0.55);
   }
 
   .heb-landing__subtitle {
     margin: clamp(0.7rem, 2vw, 1.2rem) 0 0;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.95);
     font-family: var(--font-heading-secondary);
     font-size: clamp(1.05rem, 2.4vw, 1.65rem);
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+    text-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.7),
+      0 2px 8px rgba(0, 0, 0, 0.55);
   }
 
   .heb-landing__actions {
@@ -5718,6 +6060,57 @@ const stationCount = hebStoreData.length;
 
   .heb-landing__selection-panel[hidden] {
     display: none;
+  }
+
+  /* "× Clear" pill button sitting in the top-right of the routes
+     panel. Hidden by default via the [hidden] attribute — the JS
+     unhides it whenever there's at least one selected station, so
+     the button only appears when there's something to clear. */
+  .heb-landing__selection-clear {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.22rem 0.6rem;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.22);
+    color: rgba(255, 255, 255, 0.85);
+    font-family: var(--font-heading-secondary);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    line-height: 1;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition:
+      background-color 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
+  }
+
+  .heb-landing__selection-clear[hidden] {
+    display: none;
+  }
+
+  .heb-landing__selection-clear:hover,
+  .heb-landing__selection-clear:focus-visible {
+    background: var(--color-accent, #ff3333);
+    border-color: var(--color-accent, #ff3333);
+    color: #fff;
+    outline: none;
+    transform: scale(1.04);
+  }
+
+  .heb-landing__selection-clear > span:first-child {
+    font-size: 0.85rem;
+    line-height: 1;
+    font-family: var(--font-body);
+    font-weight: 500;
   }
 
   .heb-landing__selection-panel-header {
