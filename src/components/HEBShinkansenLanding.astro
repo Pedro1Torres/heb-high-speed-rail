@@ -2908,9 +2908,7 @@ const stationCount = hebStoreData.length;
               // stripe color is the final diffuse (no double-tint).
               const palette = uniforms.stripeColors.value;
               for (let i = 0; i < palette.length; i += 1) {
-                palette[i].set(
-                  i < hexColors.length ? hexColors[i] : 0xffffff,
-                );
+                palette[i].set(i < hexColors.length ? hexColors[i] : 0xffffff);
               }
               uniforms.stripeCount.value = Math.min(
                 hexColors.length,
