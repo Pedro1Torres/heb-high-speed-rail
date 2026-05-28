@@ -1560,6 +1560,15 @@ const stationCount = hebStoreData.length;
         section.style.setProperty("--route-color", cfg.lineColor);
         section.style.setProperty("--route-hat-color", cfg.hatColor);
         section.style.setProperty("--route-text-color", cfg.textColor);
+        // Inline the box geometry — Astro's scoped CSS doesn't reach
+        // these JS-created sections, so set the rounding, clipping,
+        // and stacking context here. This makes the active-route red
+        // ring (applied in setActiveRoute) render rounded, clips the
+        // header's corners to match, and lets the active section sit
+        // above its neighbors.
+        section.style.borderRadius = "0.7rem";
+        section.style.overflow = "hidden";
+        section.style.position = "relative";
 
         const header = document.createElement("button");
         header.type = "button";
@@ -1645,9 +1654,18 @@ const stationCount = hebStoreData.length;
         // Inline `display: none` guarantees the body starts collapsed
         // regardless of what any external stylesheet does to
         // .heb-landing__route-body. `setRouteOpen` flips this back to
-        // "" (empty string = inherit the stylesheet default) when the
-        // section opens.
+        // "block" when the section opens.
         body.style.display = "none";
+        // Cap the open body's height and scroll internally so a route
+        // with many stations stays compact and the user can scroll
+        // through its full list. Inlined because the scoped CSS doesn't
+        // reliably reach these JS-created elements. The generous bottom
+        // padding keeps the last item's × remove button off the
+        // section's clipped bottom edge so it stays fully clickable.
+        body.style.maxHeight = "34vh";
+        body.style.overflowY = "auto";
+        body.style.overflowX = "hidden";
+        body.style.padding = "0.35rem 0.55rem 0.95rem";
 
         const list = document.createElement("ol");
         list.className = "heb-landing__selection-list";
@@ -1665,12 +1683,20 @@ const stationCount = hebStoreData.length;
 
         header.addEventListener("click", () => toggleRouteOpen(id));
       });
+
+      // Paint the initial active-route highlight (Route 1 by default)
+      // now that every section is in the DOM. setActiveRoute applies
+      // the inline red ring — without this call the default route
+      // would have data-route-active="true" but no visible box on
+      // first render.
+      setActiveRoute(activeRouteId);
     }
 
     // Click on a route header: mark that route active (so new map
-    // clicks land there) AND flip whether its section is open. Each
-    // section toggles independently — multiple can be open at once,
-    // and the active route can be collapsed if you like.
+    // clicks land there) AND flip whether its section is open. Strict
+    // accordion — opening one route closes every other, so at most one
+    // section is expanded at a time. Clicking the already-open route
+    // collapses it (leaving none open).
     function toggleRouteOpen(routeId: RouteId) {
       setActiveRoute(routeId);
       const section = root.querySelector<HTMLElement>(
@@ -1678,7 +1704,20 @@ const stationCount = hebStoreData.length;
       );
       if (!section) return;
       const wasOpen = section.dataset.routeOpen === "true";
-      setRouteOpen(routeId, !wasOpen);
+      if (wasOpen) {
+        setRouteOpen(routeId, false);
+      } else {
+        openRouteExclusive(routeId);
+      }
+    }
+
+    // Opens exactly one route and closes the rest — the strict-accordion
+    // primitive. Reused by toggleRouteOpen and by addSelectedStation's
+    // auto-expand so map-clicks also keep a single route open.
+    function openRouteExclusive(routeId: RouteId) {
+      ROUTE_IDS.forEach((id) => {
+        setRouteOpen(id, id === routeId);
+      });
     }
 
     // Imperative setter — used by addSelectedStation to auto-expand on
@@ -1713,7 +1752,18 @@ const stationCount = hebStoreData.length;
           `[data-route-section="${id}"]`,
         );
         if (!section) return;
-        section.dataset.routeActive = id === routeId ? "true" : "false";
+        const isActive = id === routeId;
+        section.dataset.routeActive = isActive ? "true" : "false";
+        // Red selection ring applied INLINE — the scoped CSS rule for
+        // [data-route-active="true"] never matches these JS-created
+        // sections (Astro requires a data-astro-cid-* attribute the
+        // elements don't have), so the box-shadow has to be set here.
+        // Red is distinct from every route color, so it reads as a
+        // "your clicks land here" indicator. Tunable: the 4px spread.
+        section.style.boxShadow = isActive
+          ? "0 0 0 4px #ff2424, 0 0 14px rgba(255, 36, 36, 0.5)"
+          : "none";
+        section.style.zIndex = isActive ? "3" : "";
       });
     }
 
@@ -3785,9 +3835,9 @@ const stationCount = hebStoreData.length;
       updateRailroadRoute(routeId);
       updateAllStoreTints();
       // Auto-expand this route's section so the user immediately sees
-      // what they just selected. If it was already open we leave it
-      // open. Clicking the header still toggles it shut afterward.
-      setRouteOpen(routeId, true);
+      // what they just selected — exclusively, so any other open route
+      // collapses (strict accordion: one open at a time).
+      openRouteExclusive(routeId);
     }
 
     function removeSelectedStation(routeId: RouteId, stationId: string) {
@@ -6311,11 +6361,17 @@ const stationCount = hebStoreData.length;
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
-    gap: 0.22rem;
+    /* Generous gap so the active route's 4px red ring has clear space
+       on both sides and never visually crowds / overlaps the adjacent
+       route pills. */
+    gap: 0.7rem;
     margin-top: 0.05rem;
     overflow-y: auto;
     overflow-x: hidden;
-    padding-right: 0.1rem;
+    /* Padding all around so the active-route red ring (a box-shadow
+       on the section) has room and isn't clipped by the accordion's
+       overflow on the section edges. Sized for the 4px ring. */
+    padding: 5px 7px;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
   }
@@ -6407,15 +6463,11 @@ const stationCount = hebStoreData.length;
       inset 0 -2px 0 rgba(0, 0, 0, 0.18);
   }
 
-  /* Active-route highlight (where new clicks land). Stays present even
-     when the section is collapsed — a soft outer ring in the route's
-     color so the user can tell at a glance which list their next click
-     will add to. */
-  .heb-landing__route-section[data-route-active="true"]
-    .heb-landing__route-header {
-    outline: 2px solid rgba(255, 255, 255, 0.55);
-    outline-offset: 1px;
-  }
+  /* Active-route highlight (the bright red selection ring) is applied
+     INLINE in setActiveRoute() — a scoped CSS rule here would never
+     match the JS-created .heb-landing__route-section elements (Astro
+     scoping requires a data-astro-cid attribute they don't carry). The
+     accordion padding above reserves room for that inline ring. */
 
   /* Chevron icon — `▾`. Rotates 180° when its section is open so
      closed/open states read at a glance. */
