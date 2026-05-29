@@ -1,0 +1,10 @@
+# Netlify build + functions config.
+# The Astro site stays static (published from dist/); the visit-counter
+# lives as a standalone serverless function in netlify/functions/.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
