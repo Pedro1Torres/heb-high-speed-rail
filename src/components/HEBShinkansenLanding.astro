@@ -1373,23 +1373,33 @@ const stationCount = hebStoreData.length;
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Visit-count source — THE SINGLE SWAP POINT.
+    // Visit-count source.
     //
-    // TODO (once hosting is decided): replace the localStorage stub
-    // below with a real shared counter so the number reflects ALL
-    // visitors, e.g.:
-    //   const res = await fetch(
-    //     "https://<counter-api>/hit/heb-shinkansen",
-    //   );
-    //   return (await res.json()).count;
-    // Options: a free third-party counter API (no infra) or a
-    // serverless function + KV. Only this function body changes.
+    // Primary: the Netlify Function at /.netlify/functions/visit-count,
+    // which increments a Netlify Blobs counter and returns { count } —
+    // a real GLOBAL total of page loads across all visitors. That
+    // function only runs on a Netlify deploy (or `netlify dev`).
     //
-    // Stub: increment a per-browser localStorage tally on each load so
-    // the displayed total moves during development. This counts only
-    // THIS browser's loads — it is NOT a global count.
+    // Fallback: when the function isn't reachable (e.g. plain
+    // `astro dev`, or a non-Netlify host), increment a per-browser
+    // localStorage tally so the widget still shows a moving number.
+    // This fallback is per-browser only, NOT global.
     // ─────────────────────────────────────────────────────────────────
     async function getVisitCount(): Promise<number> {
+      try {
+        const res = await fetch("/.netlify/functions/visit-count", {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.count === "number") {
+            return data.count;
+          }
+        }
+      } catch {
+        // Function unavailable (local astro dev / non-Netlify host) —
+        // fall through to the localStorage fallback below.
+      }
       try {
         const key = "heb-visit-count";
         const next = (Number(window.localStorage.getItem(key)) || 0) + 1;
