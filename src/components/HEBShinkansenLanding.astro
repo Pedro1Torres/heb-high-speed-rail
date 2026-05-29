@@ -54,6 +54,32 @@ const stationCount = hebStoreData.length;
       >
     </div>
 
+    <div class="heb-landing__visits" data-visits>
+      <button
+        type="button"
+        class="heb-landing__visits-button"
+        data-visits-toggle
+        aria-label="Site visit count"
+        aria-expanded="false"
+      >
+        <img
+          src="/lil-cowboy.svg"
+          alt=""
+          class="heb-landing__visits-hat"
+        />
+      </button>
+      <div
+        class="heb-landing__visits-popup"
+        data-visits-popup
+        role="status"
+        hidden
+      >
+        This site was visited
+        <span class="heb-landing__visits-count" data-visits-count>—</span>
+        times
+      </div>
+    </div>
+
     <div class="heb-landing__region-hud" data-region-hud hidden>
       <div class="heb-landing__region-title" data-region-title-panel>
         <p class="heb-landing__region-kicker">Regional View</p>
@@ -981,6 +1007,7 @@ const stationCount = hebStoreData.length;
     initRegionsModal();
     initGetStartedModal();
     initCitiesModal();
+    initVisitCounter();
     // "× Clear" button at the top of the routes panel — clears every
     // route's selections in one click. Hidden whenever the total count
     // is 0 (toggled by updateSelectionMeta), so the button only shows
@@ -1294,6 +1321,84 @@ const stationCount = hebStoreData.length;
         if (modal.dataset.modalOpen !== "true") return;
         close();
       });
+    }
+
+    // Visit counter — bottom-left cowboy-hat button that, on click,
+    // pops up "This site was visited X times". X is the total page
+    // loads. The count source is a single swappable seam
+    // (`getVisitCount`); today it's a localStorage stub so the number
+    // moves during dev, and it gets replaced with a real shared
+    // counter once hosting is chosen (see getVisitCount's TODO).
+    function initVisitCounter() {
+      const widget = root.querySelector<HTMLElement>("[data-visits]");
+      const toggle = root.querySelector<HTMLButtonElement>(
+        "[data-visits-toggle]",
+      );
+      const popup = root.querySelector<HTMLElement>("[data-visits-popup]");
+      const countEl = root.querySelector<HTMLElement>("[data-visits-count]");
+      if (!widget || !toggle || !popup || !countEl) return;
+
+      // Resolve + display the count once on load.
+      getVisitCount()
+        .then((count) => {
+          countEl.textContent = count.toLocaleString();
+        })
+        .catch(() => {
+          countEl.textContent = "—";
+        });
+
+      const setOpen = (open: boolean) => {
+        popup.hidden = !open;
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      };
+
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setOpen(popup.hidden);
+      });
+
+      // Close on outside-click and Escape — mirrors the modal/tooltip
+      // dismissal pattern used elsewhere in this component.
+      document.addEventListener("click", (event) => {
+        if (popup.hidden) return;
+        if (!widget.contains(event.target as Node)) {
+          setOpen(false);
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !popup.hidden) {
+          setOpen(false);
+        }
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Visit-count source — THE SINGLE SWAP POINT.
+    //
+    // TODO (once hosting is decided): replace the localStorage stub
+    // below with a real shared counter so the number reflects ALL
+    // visitors, e.g.:
+    //   const res = await fetch(
+    //     "https://<counter-api>/hit/heb-shinkansen",
+    //   );
+    //   return (await res.json()).count;
+    // Options: a free third-party counter API (no infra) or a
+    // serverless function + KV. Only this function body changes.
+    //
+    // Stub: increment a per-browser localStorage tally on each load so
+    // the displayed total moves during development. This counts only
+    // THIS browser's loads — it is NOT a global count.
+    // ─────────────────────────────────────────────────────────────────
+    async function getVisitCount(): Promise<number> {
+      try {
+        const key = "heb-visit-count";
+        const next = (Number(window.localStorage.getItem(key)) || 0) + 1;
+        window.localStorage.setItem(key, String(next));
+        return next;
+      } catch {
+        // localStorage can throw (private mode / blocked storage).
+        return 1;
+      }
     }
 
     // Get Started modal — quick tutorial with mouse-control diagrams.
@@ -6623,6 +6728,112 @@ const stationCount = hebStoreData.length;
     background: var(--color-accent);
     border-color: var(--color-accent);
     transform: translateX(-50%) translateY(-2px);
+  }
+
+  /* ─── Visit counter (bottom-left cowboy-hat button) ──────────────
+     A small round glass button holding the lil-cowboy SVG; clicking
+     it pops the "visited X times" glass card above it. The HUD is
+     pointer-events:none, so the widget re-enables pointer events
+     (same pattern as nav / actions). */
+  .heb-landing__visits {
+    position: absolute;
+    left: clamp(1rem, 3vw, 2rem);
+    bottom: clamp(1rem, 4vh, 2.2rem);
+    z-index: 12;
+    pointer-events: auto;
+  }
+
+  .heb-landing__visits-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 4.6rem;
+    height: 4.6rem;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    background: rgba(18, 22, 28, 0.5);
+    box-shadow:
+      0 12px 30px rgba(15, 20, 28, 0.32),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    cursor: pointer;
+    transition:
+      transform 160ms ease,
+      background-color 160ms ease,
+      border-color 160ms ease;
+  }
+
+  .heb-landing__visits-button:hover {
+    transform: translateY(-2px);
+    background: rgba(24, 30, 38, 0.62);
+  }
+
+  .heb-landing__visits-button:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline-offset: 2px;
+  }
+
+  .heb-landing__visits-hat {
+    display: block;
+    width: 3.8rem;
+    height: 3.8rem;
+    /* The SVG's viewBox is cropped tight to the hat, so it fills this
+       box directly (no transform needed). Drop-shadow lifts the white
+       strokes off the glass. */
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+    pointer-events: none;
+  }
+
+  /* "visited X times" popup — glass card anchored above the button,
+     matching the station-tooltip / modal chrome. */
+  .heb-landing__visits-popup {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 0.6rem);
+    min-width: max-content;
+    max-width: 16rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 0.6rem;
+    background: rgba(15, 20, 28, 0.94);
+    box-shadow:
+      0 16px 36px rgba(0, 0, 0, 0.42),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    color: rgba(255, 255, 255, 0.9);
+    font-family: var(--font-heading-secondary);
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .heb-landing__visits-popup[hidden] {
+    display: none;
+  }
+
+  /* Downward tail pointing at the button */
+  .heb-landing__visits-popup::after {
+    content: "";
+    position: absolute;
+    bottom: -7px;
+    left: 1.1rem;
+    width: 0;
+    height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 7px solid rgba(15, 20, 28, 0.94);
+  }
+
+  .heb-landing__visits-count {
+    color: var(--color-accent, #ff3333);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
 
   @media (max-width: 720px) {
