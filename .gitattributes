@@ -1,0 +1,26 @@
+# Normalize line endings: store all text files with LF in the repo so
+# Windows/macOS/Linux checkouts stay consistent and diffs don't churn on
+# CRLF vs LF. (core.autocrlf differences across machines caused whole-file
+# diffs before this.)
+* text=auto eol=lf
+
+# Keep shell scripts LF (executable on Linux/Netlify).
+*.sh text eol=lf
+*.mjs text eol=lf
+
+# Binary assets — never normalize or diff.
+*.glb binary
+*.gltf binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp4 binary
+*.webm binary
