@@ -5583,6 +5583,10 @@ const stationCount = hebStoreData.length;
       position: relative;
       width: 100vw;
       height: 100vh;
+      /* dvh = dynamic viewport (excludes the visible mobile browser
+         chrome) so bottom-anchored UI clears the iOS Safari toolbar;
+         100vh above is the fallback for browsers without dvh. */
+      height: 100dvh;
       min-height: 620px;
       overflow: hidden;
       color: var(--color-text-primary);
@@ -5645,6 +5649,7 @@ const stationCount = hebStoreData.length;
       z-index: 1;
       width: 100vw;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
     }
 
@@ -5663,12 +5668,16 @@ const stationCount = hebStoreData.length;
       z-index: 10;
       width: 100vw;
       height: 100vh;
+      /* dvh keeps the HUD's bottom edge above the iOS Safari toolbar, so
+         the visits button, routes panel, route dots, and GET STARTED
+         (all children of the HUD) are never hidden behind it. */
+      height: 100dvh;
       pointer-events: none;
     }
 
     .heb-landing__nav {
       position: absolute;
-      top: clamp(1rem, 3vw, 2rem);
+      top: calc(env(safe-area-inset-top, 0px) + clamp(1rem, 3vw, 2rem));
       left: 50%;
       z-index: 10;
       display: flex;
@@ -5934,6 +5943,11 @@ const stationCount = hebStoreData.length;
     .heb-landing__modal {
       position: fixed;
       inset: 0;
+      /* Bound the centering box to the visible (dynamic) viewport so the
+         card never centers behind the iOS status bar / address bar. vh is
+         the fallback for browsers without dvh. */
+      height: 100vh;
+      height: 100dvh;
       z-index: 100;
       display: flex;
       align-items: center;
@@ -5969,6 +5983,13 @@ const stationCount = hebStoreData.length;
       z-index: 1;
       width: min(92vw, 36rem);
       max-height: calc(100vh - clamp(2rem, 8vw, 6rem));
+      /* dvh + safe-area insets keep the card and its heading clear of the
+         notch / Dynamic Island (top) and home indicator (bottom) on
+         mobile, so modal titles aren't clipped behind the iPhone UI. */
+      max-height: calc(
+        100dvh - clamp(2rem, 8vw, 6rem) - env(safe-area-inset-top, 0px) -
+          env(safe-area-inset-bottom, 0px)
+      );
       overflow-y: auto;
       padding: clamp(1.4rem, 3vw, 2rem) clamp(1.5rem, 3vw, 2.25rem);
       border: 1px solid rgba(255, 255, 255, 0.22);
@@ -7162,7 +7183,7 @@ const stationCount = hebStoreData.length;
       .heb-landing__selection-panel {
         top: auto;
         right: 0.65rem;
-        bottom: max(0.65rem, env(safe-area-inset-bottom));
+        bottom: max(0.9rem, env(safe-area-inset-bottom));
         width: calc(100vw - 1.3rem);
         /* Generous, orientation-aware height so the accordion has room to
          scroll instead of squishing route pills. dvh accounts for mobile
@@ -7238,7 +7259,7 @@ const stationCount = hebStoreData.length;
 
     .heb-landing__region-title {
       position: absolute;
-      top: clamp(1rem, 3vh, 1.9rem);
+      top: calc(env(safe-area-inset-top, 0px) + clamp(1rem, 3vh, 1.9rem));
       left: 50%;
       width: min(92vw, 620px);
       padding: 0 1rem;
@@ -7320,7 +7341,7 @@ const stationCount = hebStoreData.length;
     .heb-landing__region-close-mobile {
       display: none;
       position: absolute;
-      top: clamp(1rem, 3vh, 1.9rem);
+      top: calc(env(safe-area-inset-top, 0px) + clamp(1rem, 3vh, 1.9rem));
       left: clamp(0.6rem, 3vw, 1rem);
       z-index: 12;
       width: 2.6rem;
