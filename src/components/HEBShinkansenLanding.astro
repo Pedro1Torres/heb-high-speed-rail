@@ -198,7 +198,13 @@ const stationCount = hebStoreData.length;
           </p>
           <p class="heb-landing__modal-postscript">
             <strong>P.S.</strong> If you&rsquo;re looking to hire someone for marketing/animations,
-            reach out.
+            <a
+              class="heb-landing__reach-out"
+              href="https://brainrotalot.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              >reach out</a
+            >.
           </p>
           <div class="heb-landing__techstack">
             <p class="heb-landing__techstack-title">What was used:</p>
@@ -6107,6 +6113,22 @@ const stationCount = hebStoreData.length;
       font-family: var(--font-heading-secondary, sans-serif);
       font-weight: 700;
       letter-spacing: 0.12em;
+    }
+
+    /* The "reach out" link in the P.S. — red + bold + underlined so it
+       clearly reads as a clickable link to the author's site. */
+    .heb-landing__reach-out {
+      color: var(--color-accent, #ff3333);
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      text-decoration-thickness: 1.5px;
+      transition: color 160ms ease;
+    }
+
+    .heb-landing__reach-out:hover,
+    .heb-landing__reach-out:focus-visible {
+      color: var(--color-accent-red, #dc2626);
     }
 
     /* ─── "What was used" tech-stack credits (in the About modal) ─────
